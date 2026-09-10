@@ -10,4 +10,7 @@
 - Added one-time UAC registration through an elevated Task Scheduler launcher.
 - Added CZ/EN language setting foundation.
 - Added `off`, `single`, and `all` logging modes.
-- Added network-drive-safe upgrade bootstrap and .NET 10 build pipeline.
+- Added mapped/UNC network-drive support.
+- Added fresh-folder bootstrap through `upgrade.cmd` for an empty target directory.
+- Hardened upgrade handling for native stderr, branch verification, staged publish, artifact verification, and rollback-safe `dist` deployment.
+- Added Windows CI build and publish verification.
