@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$UpdaterRevision = '1.02'
+$UpdaterRevision = '1.03'
 $RepoDir = [IO.Path]::GetFullPath($RepoDir).TrimEnd('\')
 $LogDir = Join-Path $RepoDir 'logs'
 $LogFile = Join-Path $LogDir 'upgrade.log'
@@ -56,6 +56,17 @@ function Invoke-Native {
     if ($code -ne 0) { throw "$File exited with code $code" }
     return @($output)
 }
+function Invoke-GitQuietStatus([string[]]$ArgumentList) {
+    $oldPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & git.exe @ArgumentList *> $null
+        return $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldPreference
+    }
+}
 function Remove-Generated([string]$Path) {
     if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
 }
@@ -71,10 +82,22 @@ try {
         Fail "Unexpected origin URL: $origin"
     }
 
-    $dirty = Invoke-Native -File 'git.exe' -ArgumentList @('status','--porcelain','--untracked-files=no') -Quiet
-    if (@($dirty).Count -gt 0) { Fail 'Tracked or staged local changes detected. Commit or revert them before upgrade.' }
-
     Invoke-Native -File 'git.exe' -ArgumentList @('fetch','origin',$Branch) | Out-Null
+
+    # upgrade.cmd and upgrade.ps1 are authoritative bootstrap files. They may differ locally
+    # after a fresh-folder bootstrap or because of line-ending materialization. They are
+    # intentionally excluded from user-change detection and will be synchronized below.
+    $worktreeRc = Invoke-GitQuietStatus @('diff','--quiet','--ignore-space-at-eol','--ignore-submodules','--','.',':(exclude)upgrade.cmd',':(exclude)upgrade.ps1')
+    if ($worktreeRc -gt 1) { Fail "Git worktree check failed with exit code $worktreeRc." }
+    $stagedRc = Invoke-GitQuietStatus @('diff','--cached','--quiet','--ignore-submodules','--','.',':(exclude)upgrade.cmd',':(exclude)upgrade.ps1')
+    if ($stagedRc -gt 1) { Fail "Git staged-change check failed with exit code $stagedRc." }
+    if ($worktreeRc -eq 1 -or $stagedRc -eq 1) {
+        $changes = Invoke-Native -File 'git.exe' -ArgumentList @('status','--porcelain=v1','--untracked-files=no','--','.',':(exclude)upgrade.cmd',':(exclude)upgrade.ps1') -Quiet
+        foreach ($change in @($changes)) { Add-Content $LogFile ("Local change: " + $change.ToString()) }
+        Fail 'Tracked or staged local changes outside updater bootstrap files detected. Commit or revert them before upgrade.'
+    }
+
+    Write-Step '[REPOSITORY] Synchronizing authoritative updater and tracked tree to origin/DEVEL...'
     Invoke-Native -File 'git.exe' -ArgumentList @('checkout',$Branch) | Out-Null
     Invoke-Native -File 'git.exe' -ArgumentList @('reset','--hard',"origin/$Branch") | Out-Null
 
