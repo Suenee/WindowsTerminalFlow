@@ -20,19 +20,31 @@ public partial class MainWindow : Window
             AddTab(folder.Name);
     }
 
+    private string BuildCommand(string path)
+    {
+        var shell = SettingsService.Settings.Shell.ToLowerInvariant();
+        var escapedPowerShellPath = path.Replace("'", "''");
+        return shell switch
+        {
+            "powershell.exe" => $"powershell.exe -NoExit -Command \"Set-Location -LiteralPath '{escapedPowerShellPath}'\"",
+            "pwsh.exe" => $"pwsh.exe -NoExit -Command \"Set-Location -LiteralPath '{escapedPowerShellPath}'\"",
+            _ => $"cmd.exe /D /K cd /d \"{path}\""
+        };
+    }
+
     private void AddTab(string name)
     {
         var path = Path.Combine(_root, name);
         var terminal = new EasyTerminalControl
         {
-            StartupCommandLine = $"cmd.exe /D /K cd /d \"{path}\"",
+            StartupCommandLine = BuildCommand(path),
             FontSizeWhenSettingTheme = SettingsService.Settings.FontSize
         };
 
         var tab = new TabItem { Content = terminal };
         var header = new StackPanel { Orientation = Orientation.Horizontal };
         header.Children.Add(new TextBlock { Text = name, Margin = new Thickness(6, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
-        var close = new Button { Content = "×", Width = 24, Height = 22, Padding = new Thickness(0), Background = Brushes.Transparent, Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+        var close = new Button { Content = "×", Width = 24, Height = 22, Padding = new Thickness(0), Background = Brushes.Transparent, Foreground = Brushes.White, BorderThickness = new Thickness(0), ToolTip = "Close" };
         close.Click += (_, _) =>
         {
             WorkspaceService.SetEnabled(_root, name, false);

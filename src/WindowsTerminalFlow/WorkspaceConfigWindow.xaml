@@ -5,10 +5,10 @@
     <DockPanel Margin="14">
         <TextBlock x:Name="RootText" DockPanel.Dock="Top" FontWeight="SemiBold" Margin="0,0,0,10" TextWrapping="Wrap"/>
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-            <Button Content="Save" Width="90" Margin="4" Click="Save_Click"/>
-            <Button Content="Cancel" Width="90" Margin="4" Click="Cancel_Click"/>
+            <Button x:Name="SaveButton" Content="Uložit" Width="90" Margin="4" Click="Save_Click"/>
+            <Button x:Name="CancelButton" Content="Zrušit" Width="90" Margin="4" Click="Cancel_Click"/>
         </StackPanel>
-        <ListBox x:Name="FolderList" AllowDrop="True" PreviewMouseLeftButtonDown="FolderList_MouseDown" Drop="FolderList_Drop">
+        <ListBox x:Name="FolderList" AllowDrop="True" PreviewMouseLeftButtonDown="FolderList_MouseDown" PreviewMouseMove="FolderList_MouseMove" Drop="FolderList_Drop">
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <CheckBox IsChecked="{Binding Enabled}" Content="{Binding Name}" Padding="4"/>

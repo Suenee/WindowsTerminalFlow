@@ -30,26 +30,43 @@ public static class ElevatedLauncher
         catch { return false; }
     }
 
-    public static void RegisterWithUacAndRun()
+    public static void RegisterWithUacAndRun(string requestFile)
     {
         Process.Start(new ProcessStartInfo
         {
             FileName = Environment.ProcessPath!,
-            Arguments = "--register-and-run",
+            Arguments = $"--register-and-run \"{requestFile}\"",
             UseShellExecute = true,
             Verb = "runas"
         });
     }
 
+    public static void DispatchPendingRequests()
+    {
+        foreach (var requestFile in LaunchRequestStore.GetPendingFiles())
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = Environment.ProcessPath!,
+                Arguments = $"--consume-request \"{requestFile}\"",
+                UseShellExecute = false
+            });
+        }
+    }
+
     public static void RegisterTask()
     {
         if (!IsAdministrator()) throw new InvalidOperationException("Administrator rights are required to register the launcher.");
+
         var exe = Environment.ProcessPath!.Replace("'", "''");
+        var user = WindowsIdentity.GetCurrent().Name.Replace("'", "''");
         var taskName = TaskName.Replace("'", "''");
-        var ps = $"$a=New-ScheduledTaskAction -Execute '{exe}' -Argument '--scheduled';" +
-                 "$p=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest;" +
-                 "$t=New-ScheduledTask -Action $a -Principal $p;" +
+        var ps = $"$a=New-ScheduledTaskAction -Execute '{exe}' -Argument '--scheduled-launcher';" +
+                 $"$p=New-ScheduledTaskPrincipal -UserId '{user}' -LogonType Interactive -RunLevel Highest;" +
+                 "$s=New-ScheduledTaskSettingsSet -MultipleInstances Parallel -ExecutionTimeLimit (New-TimeSpan -Minutes 1);" +
+                 "$t=New-ScheduledTask -Action $a -Principal $p -Settings $s;" +
                  $"Register-ScheduledTask -TaskName '{taskName}' -InputObject $t -Force | Out-Null";
+
         using var p = Process.Start(new ProcessStartInfo
         {
             FileName = "powershell.exe",

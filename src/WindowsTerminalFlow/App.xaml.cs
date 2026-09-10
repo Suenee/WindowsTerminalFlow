@@ -1,6 +1,3 @@
-using System.Diagnostics;
-using System.Security.Principal;
-using System.Text.Json;
 using System.Windows;
 using WindowsTerminalFlow.Models;
 using WindowsTerminalFlow.Services;
@@ -18,34 +15,43 @@ public partial class App : Application
 
         try
         {
-            var cwd = Environment.CurrentDirectory;
             var args = e.Args.ToList();
 
-            if (args.Contains("--register-and-run", StringComparer.OrdinalIgnoreCase))
+            if (args.Contains("--scheduled-launcher", StringComparer.OrdinalIgnoreCase))
+            {
+                ElevatedLauncher.DispatchPendingRequests();
+                Shutdown();
+                return;
+            }
+
+            var consumeIndex = args.FindIndex(x => x.Equals("--consume-request", StringComparison.OrdinalIgnoreCase));
+            if (consumeIndex >= 0 && consumeIndex + 1 < args.Count)
+            {
+                var request = LaunchRequestStore.ReadAndDelete(args[consumeIndex + 1]);
+                StartUi(request.WorkingDirectory, request.Arguments);
+                return;
+            }
+
+            var registerIndex = args.FindIndex(x => x.Equals("--register-and-run", StringComparison.OrdinalIgnoreCase));
+            if (registerIndex >= 0 && registerIndex + 1 < args.Count)
             {
                 ElevatedLauncher.RegisterTask();
-                var request = LaunchRequestStore.Read();
+                var request = LaunchRequestStore.ReadAndDelete(args[registerIndex + 1]);
                 StartUi(request.WorkingDirectory, request.Arguments);
                 return;
             }
 
-            if (args.Contains("--scheduled", StringComparer.OrdinalIgnoreCase))
-            {
-                var request = LaunchRequestStore.Read();
-                StartUi(request.WorkingDirectory, request.Arguments);
-                return;
-            }
-
+            var cwd = Environment.CurrentDirectory;
             if (!ElevatedLauncher.IsAdministrator())
             {
-                LaunchRequestStore.Write(new LaunchRequest(cwd, args.ToArray()));
+                var requestFile = LaunchRequestStore.Write(new LaunchRequest(cwd, args.ToArray()));
                 if (ElevatedLauncher.TryRunRegisteredTask())
                 {
                     Shutdown();
                     return;
                 }
 
-                ElevatedLauncher.RegisterWithUacAndRun();
+                ElevatedLauncher.RegisterWithUacAndRun(requestFile);
                 Shutdown();
                 return;
             }
@@ -61,6 +67,9 @@ public partial class App : Application
 
     private void StartUi(string workingDirectory, string[] args)
     {
+        if (!Directory.Exists(workingDirectory))
+            throw new DirectoryNotFoundException(workingDirectory);
+
         Environment.CurrentDirectory = workingDirectory;
         SettingsService.Initialize();
         Logger.Initialize(SettingsService.Settings.LoggingMode);
