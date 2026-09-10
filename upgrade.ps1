@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$UpdaterRevision = '1.03'
+$UpdaterRevision = '1.04'
 $RepoDir = [IO.Path]::GetFullPath($RepoDir).TrimEnd('\')
 $LogDir = Join-Path $RepoDir 'logs'
 $LogFile = Join-Path $LogDir 'upgrade.log'
@@ -14,6 +14,11 @@ $DistDir = Join-Path $RepoDir 'dist'
 $Phase = 'BOOTSTRAP'
 $WarningCount = 0
 $UseColor = -not $env:NO_COLOR -and -not [Console]::IsOutputRedirected
+
+$Utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $Utf8
+$OutputEncoding = $Utf8
+try { & chcp.com 65001 *> $null } catch { }
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
@@ -70,6 +75,45 @@ function Invoke-GitQuietStatus([string[]]$ArgumentList) {
 function Remove-Generated([string]$Path) {
     if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
 }
+function Copy-FileWithRetry {
+    param(
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [int]$Attempts = 20,
+        [int]$DelayMs = 500
+    )
+    $parent = Split-Path -Parent $Destination
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            if ($attempt -ge $Attempts) {
+                throw "Could not copy '$Source' to '$Destination' after $Attempts attempts. Last error: $($_.Exception.Message)"
+            }
+            if ($attempt -eq 1) { Write-Warn "Deployment target is temporarily unavailable; retrying: $Destination" }
+            Start-Sleep -Milliseconds $DelayMs
+        }
+    }
+}
+function Copy-TreeWithRetry {
+    param(
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$true)][string]$Destination
+    )
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    $sourceRoot = [IO.Path]::GetFullPath($Source).TrimEnd('\')
+    foreach ($dir in Get-ChildItem -LiteralPath $sourceRoot -Directory -Recurse) {
+        $relative = $dir.FullName.Substring($sourceRoot.Length).TrimStart('\')
+        New-Item -ItemType Directory -Force -Path (Join-Path $Destination $relative) | Out-Null
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $sourceRoot -File -Recurse) {
+        $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\')
+        Copy-FileWithRetry -Source $file.FullName -Destination (Join-Path $Destination $relative)
+    }
+}
 
 try {
     Set-Content $LogFile "WindowsTerminalFlow upgrade runner $UpdaterRevision`r`nDate: $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')`r`nRepository: $RepoDir`r`nBranch: $Branch"
@@ -84,9 +128,6 @@ try {
 
     Invoke-Native -File 'git.exe' -ArgumentList @('fetch','origin',$Branch) | Out-Null
 
-    # upgrade.cmd and upgrade.ps1 are authoritative bootstrap files. They may differ locally
-    # after a fresh-folder bootstrap or because of line-ending materialization. They are
-    # intentionally excluded from user-change detection and will be synchronized below.
     $worktreeRc = Invoke-GitQuietStatus @('diff','--quiet','--ignore-space-at-eol','--ignore-submodules','--','.',':(exclude)upgrade.cmd',':(exclude)upgrade.ps1')
     if ($worktreeRc -gt 1) { Fail "Git worktree check failed with exit code $worktreeRc." }
     $stagedRc = Invoke-GitQuietStatus @('diff','--cached','--quiet','--ignore-submodules','--','.',':(exclude)upgrade.cmd',':(exclude)upgrade.ps1')
@@ -151,27 +192,42 @@ try {
     if (-not (Test-Path -LiteralPath $stagedDll)) { Fail 'Required staged file is missing: wtf.dll' }
 
     $Phase = 'DEPLOY'
-    Write-Step '[DEPLOY] Replacing dist only after staged artifacts passed verification...'
+    Write-Step '[DEPLOY] Copying verified staged artifacts into dist with network-share-safe retries...'
+    $hadPreviousDist = Test-Path -LiteralPath $DistDir
+    if ($hadPreviousDist) {
+        Write-Step '[DEPLOY] Backing up current dist before replacement...'
+        Copy-TreeWithRetry -Source $DistDir -Destination $BackupDir
+    }
+
     try {
-        if (Test-Path -LiteralPath $DistDir) { Move-Item -LiteralPath $DistDir -Destination $BackupDir }
-        Move-Item -LiteralPath $StageDir -Destination $DistDir
+        Remove-Generated $DistDir
+        New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
+        Copy-TreeWithRetry -Source $StageDir -Destination $DistDir
     }
     catch {
-        if ((-not (Test-Path -LiteralPath $DistDir)) -and (Test-Path -LiteralPath $BackupDir)) {
-            try { Move-Item -LiteralPath $BackupDir -Destination $DistDir } catch {}
+        $deployError = $_.Exception.Message
+        try { Remove-Generated $DistDir } catch {}
+        if ($hadPreviousDist -and (Test-Path -LiteralPath $BackupDir)) {
+            try {
+                New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
+                Copy-TreeWithRetry -Source $BackupDir -Destination $DistDir
+                Write-Warn 'Deployment failed; previous dist was restored from backup.'
+            }
+            catch {
+                throw "Deployment failed and rollback also failed. Deployment error: $deployError; rollback error: $($_.Exception.Message)"
+            }
         }
-        throw "Deployment failed without intentionally deleting the previous dist: $($_.Exception.Message)"
+        throw "Deployment failed: $deployError"
     }
 
     $Phase = 'VERIFY'
     $exe = Join-Path $DistDir 'wtf.exe'
-    if (-not (Test-Path -LiteralPath $exe)) {
-        if (Test-Path -LiteralPath $BackupDir) {
-            Remove-Generated $DistDir
-            Move-Item -LiteralPath $BackupDir -Destination $DistDir
-        }
-        Fail 'Deployment verification failed: dist\wtf.exe is missing.'
+    $dll = Join-Path $DistDir 'wtf.dll'
+    if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $dll)) {
+        Fail 'Deployment verification failed: required dist artifacts are missing.'
     }
+
+    Remove-Generated $StageDir
     Remove-Generated $BackupDir
 
     $Phase = 'COMPLETE'
