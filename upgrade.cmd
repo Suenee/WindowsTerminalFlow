@@ -3,7 +3,7 @@ cls
 chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
 
-set "WTF_UPDATER_REV=1.03-bootstrap"
+set "WTF_UPDATER_REV=1.04-bootstrap"
 set "WTF_BRANCH=DEVEL"
 set "WTF_REPO_URL=https://github.com/Suenee/WindowsTerminalFlow.git"
 
@@ -56,15 +56,15 @@ set "TEMP_LAUNCHER=%TEMP%\wtf-upgrade-launcher-%RANDOM%-%RANDOM%.cmd"
 set "TEMP_LAUNCHER_LF=%TEMP%\wtf-upgrade-launcher-%RANDOM%-%RANDOM%.tmp"
 git show origin/!WTF_BRANCH!:upgrade.cmd > "!TEMP_LAUNCHER_LF!" 2>>"!UPGRADE_LOG!"
 if errorlevel 1 goto :fail_self
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:TEMP_LAUNCHER_LF; $o=$env:TEMP_LAUNCHER; $t=[IO.File]::ReadAllText($p); $t=$t -replace '`r?`n','`r`n'; [IO.File]::WriteAllText($o,$t,[Text.UTF8Encoding]::new($false))"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:TEMP_LAUNCHER_LF; $o=$env:TEMP_LAUNCHER; if ([string]::IsNullOrWhiteSpace($p) -or [string]::IsNullOrWhiteSpace($o)) { throw 'Temporary launcher path is empty.' }; $t=[IO.File]::ReadAllText($p); $t=[Text.RegularExpressions.Regex]::Replace($t,'\r?\n',"`r`n"); [IO.File]::WriteAllText($o,$t,[Text.UTF8Encoding]::new($false))"
 if errorlevel 1 goto :fail_self
 del /q "!TEMP_LAUNCHER_LF!" >nul 2>&1
 
+rem IMPORTANT: This handoff must be terminal for the repository copy of upgrade.cmd.
+rem The child updater may reset/replace this file while it runs. Therefore the entire
+rem return/cleanup/exit sequence is kept on this already-parsed physical line.
 popd
-call "!TEMP_LAUNCHER!" --repository-internal "!ACTIVE_DIR!"
-set "RC=!ERRORLEVEL!"
-del /q "!TEMP_LAUNCHER!" >nul 2>&1
-exit /b !RC!
+call "!TEMP_LAUNCHER!" --repository-internal "!ACTIVE_DIR!" & if errorlevel 1 (del /q "!TEMP_LAUNCHER!" >nul 2>&1 & exit /b 1) else (del /q "!TEMP_LAUNCHER!" >nul 2>&1 & exit /b 0)
 
 :repository_internal
 set "ACTIVE_DIR=%~2"
