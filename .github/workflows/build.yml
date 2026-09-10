@@ -20,3 +20,10 @@ jobs:
         run: dotnet restore WindowsTerminalFlow.sln
       - name: Build
         run: dotnet build WindowsTerminalFlow.sln -c Release --no-restore
+      - name: Publish
+        run: dotnet publish src\WindowsTerminalFlow\WindowsTerminalFlow.csproj -c Release -r win-x64 --self-contained false --no-build -o ci-dist
+      - name: Verify artifact
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'ci-dist\wtf.exe')) { throw 'ci-dist\wtf.exe is missing' }
+          if (-not (Test-Path 'ci-dist\wtf.dll')) { throw 'ci-dist\wtf.dll is missing' }
