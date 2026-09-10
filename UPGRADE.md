@@ -2,55 +2,88 @@
 
 WindowsTerminalFlow follows the shared upgrade rules proven in FolderHeatMap and related Wipe Codes projects. This file records the project-specific contract and the failure modes that must not be reintroduced.
 
+The master standard is the current `UPGRADE.md` in `Suenee/FolderHeatMap` branch `devel`. When this project-specific file and the master standard differ, the safer proven master rule wins unless this file documents an intentional exception.
+
 ## Core contract
 
 `upgrade.cmd` is the single supported entry point for both an existing checkout and a fresh empty target directory.
 
-A fresh target may contain only `upgrade.cmd`. The launcher must execute bootstrap logic from `%TEMP%`, remove the copied launcher from the target, clone branch `DEVEL` directly into that same directory, verify `.git` and the authoritative repository `upgrade.cmd`, then hand control to it.
+A fresh target may contain only `upgrade.cmd`. Repository data may be stored on local, mapped, or UNC/network paths. Network storage is a supported first-class configuration, not an exceptional case.
 
-The updater must work from local, mapped, and UNC/network paths. Repository data on a network drive is supported and must never be treated as an exceptional configuration.
+An interactive `upgrade.cmd` run MUST start with one `cls`. It MUST use the standard status colors when supported: normal/default for routine progress, yellow for warning/action required, red for error, green for successful completion. `NO_COLOR` disables color only; logs remain plain text.
 
-## Architecture
+## Required architecture
+
+The repository copy of `upgrade.cmd` is deliberately tiny and disposable. It MUST NOT perform repository synchronization, build work, or wait in a state where Git can replace the file and CMD later resumes reading it.
+
+Required handoff:
 
 ```text
-upgrade.cmd -> current temporary upgrade.cmd -> current temporary upgrade.ps1 -> restore/build/stage/verify/deploy
+repository upgrade.cmd
+    -> copy itself to a unique %TEMP% launcher
+    -> terminal one-way handoff to that temporary launcher
+        -> discover/bootstrap repository
+        -> fetch explicit target branch
+        -> extract current origin/DEVEL:upgrade.ps1 to %TEMP%
+        -> execute temporary upgrade.ps1
+            -> repository sync/build/stage/verify/deploy
 ```
 
-The batch launcher owns only bootstrap, repository discovery, network-path entry, self-update transport, and handoff. Build/deploy logic belongs in `upgrade.ps1`.
+The temporary launcher is created from the already-running local launcher before any Git operation can modify the repository copy. The temporary launcher itself is outside the repository and therefore cannot be replaced by `git reset --hard`.
 
-Never overwrite a running updater and continue executing that same file. Once the repository copy of `upgrade.cmd` hands control to a temporary authoritative launcher, that handoff must be terminal: the repository copy must not resume reading any later line after the child updater returns, because Git synchronization may have replaced the file while it was running. Keep the child-call and final exit on one already-parsed physical command line, or use an equivalent one-way handoff design.
+Do NOT introduce a second remote temporary `.cmd` self-update layer. The authoritative self-update payload is `origin/DEVEL:upgrade.ps1`. This deliberately follows the master FolderHeatMap rule `upgrade.cmd -> current temporary upgrade.ps1` while retaining only the minimum temporary CMD shim needed to make the initial repository entry point immune to self-overwrite.
+
+The repository launcher handoff must be terminal. No later physical line in the repository copy may be required after the temporary child starts. A Git synchronization may replace `upgrade.cmd` while the child is running.
 
 Never clone inside a populated arbitrary directory. Never use broad `git clean -fd` or `git stash -u`.
+
+## Fresh bootstrap
+
+For a directory without `.git`:
+
+1. execute bootstrap only from the temporary launcher;
+2. require the target to be empty except for `upgrade.cmd`;
+3. delete only that allowed bootstrap copy from the target;
+4. clone branch `DEVEL` directly into the exact target directory;
+5. verify `.git` and authoritative `upgrade.ps1`;
+6. continue from the same temporary launcher into the normal repository path;
+7. fetch `DEVEL`, extract current `upgrade.ps1` to `%TEMP%`, and execute it.
+
+Do not hand back to the freshly cloned repository `upgrade.cmd`; that creates unnecessary CMD nesting and reopens the self-overwrite class of bugs.
 
 ## Git rules
 
 The authoritative branch is `DEVEL` during development. The expected repository is `Suenee/WindowsTerminalFlow`.
 
-Before building, verify the repository identity, reject tracked/staged local changes, fetch the explicit target branch, synchronize deterministically, and verify that `HEAD == origin/DEVEL`.
+Before building, verify repository identity, fetch the explicit target branch, inspect tracked/staged local changes, synchronize deterministically, verify the active branch, and verify `HEAD == origin/DEVEL`.
 
-`upgrade.cmd` and `upgrade.ps1` are authoritative bootstrap files and may legitimately differ locally after bootstrap or due to line-ending materialization. Exclude them from user-change detection, then synchronize them from `origin/DEVEL` as part of the deterministic reset.
+`upgrade.cmd` and `upgrade.ps1` are authoritative updater/bootstrap files and may legitimately differ locally after bootstrap or due to line-ending materialization. Exclude them from user-change detection, then synchronize them from `origin/DEVEL` as part of the deterministic reset.
 
-`safe.directory` must be narrowly scoped to the exact repository path for the updater process. Do not use global `safe.directory=*`.
+`safe.directory` must be process-scoped to the exact selected repository path. Never use global `safe.directory=*`.
+
+A Git ownership/dubious-owner failure is not evidence that `.git` is missing and must never trigger a nested clone.
 
 ## Network-drive rules
 
-Use `pushd`/`popd` at CMD boundaries. Do not hard-code drive letters or workstation paths. A mapped or UNC checkout must reach the same result as a local checkout.
+Use `pushd`/`popd` at CMD boundaries. Do not hard-code drive letters or workstation paths. Trim unnecessary trailing backslashes at interpreter boundaries.
 
-Do not rely on renaming whole staging directories on SMB/network shares during deployment. Prefer verified file-by-file copy with retries, backup, and rollback so mapped and UNC paths behave reliably.
+Do not rely on renaming whole staging directories on SMB/network shares during deployment. Use verified file-by-file copy with bounded retries, backup, and rollback.
+
+## Line endings and encoding
+
+Repository rules must keep Windows executable scripts explicit (`*.cmd`/`*.ps1` CRLF policy in `.gitattributes`). Git blobs obtained with `git show` may still be LF-only, so any temporary `.cmd` materialized from a Git blob would require explicit CRLF normalization. The current architecture intentionally avoids materializing a remote `.cmd` at all.
+
+The initial temporary launcher is made with ordinary file copy from the local executable `upgrade.cmd`, preserving the working-tree CRLF form.
+
+Use UTF-8 console/output encoding so localized .NET/Git output remains readable.
+
+Never use raw byte equality between Git blobs and CRLF working-tree scripts as a cleanliness check. Use Git semantics.
 
 ## Native commands
 
-Native stderr is not failure. Git, .NET and installers may write valid progress or warnings to stderr. Capture `$LASTEXITCODE` immediately and use it as the authoritative result. Do not let `$ErrorActionPreference='Stop'` turn harmless native stderr into an upgrade failure.
+Native stderr is not failure. Git, .NET and installers may write valid progress or warnings to stderr. Capture `$LASTEXITCODE` immediately and use it as the authoritative result.
 
-Avoid PowerShell parameter names that collide with automatic variables such as `$args`. Use explicit parameter names such as `$ArgumentList` and explicit named invocation for native-command wrappers.
-
-## Console and encoding
-
-An interactive `upgrade.cmd` run must start with `cls` exactly once. Later phases must not clear the screen so diagnostics remain visible.
-
-Use UTF-8 console/output encoding so localized .NET/Git output remains readable. Temporary executable `.cmd` files must use CRLF line endings even if the Git blob is stored with LF endings.
-
-Console colors are part of the user-facing status convention when supported: normal/default for routine progress, yellow for warnings or required attention, red for errors, and green for successful completion. `NO_COLOR` must disable color without changing log semantics.
+Avoid PowerShell parameter names that collide with automatic variables such as `$args`. Native-command wrappers use explicit names such as `$ArgumentList` and explicit named invocation.
 
 ## Build and deployment
 
@@ -62,15 +95,13 @@ Required lifecycle:
 CLEAN -> RESTORE -> BUILD -> DIST(staging) -> VERIFY -> DEPLOY -> VERIFY -> COMPLETE
 ```
 
-Publish into `.upgrade-stage`, verify required artifacts there, then replace `dist`. Preserve the previous `dist` as `.upgrade-dist-backup` during deployment so a failed replacement does not intentionally destroy the last known build.
-
-Only known generated directories may be deleted.
+Publish into `.upgrade-stage`, verify required artifacts there, then deploy by network-safe file copy. Preserve the previous `dist` as `.upgrade-dist-backup` until the new deployment passes verification. Delete only known generated directories.
 
 ## Logging
 
 Every repository upgrade replaces `logs\upgrade.log` with one diagnostic run. Bootstrap before the repository exists writes `WindowsTerminalFlow-bootstrap.log` next to the target directory.
 
-Final repository log markers are:
+Final repository markers are:
 
 ```text
 STATUS: SUCCESS - phase=COMPLETE
@@ -78,17 +109,36 @@ STATUS: WARNING - phase=COMPLETE
 STATUS: FAILED - phase=<PHASE>
 ```
 
-Logs must stay plain text and understandable without console colors.
+The process exit code and final marker must agree. Logs must remain understandable without console colors.
 
 ## Dependencies
 
-The updater verifies a .NET 10 SDK. If missing and `winget` is available, it may install `Microsoft.DotNet.SDK.10`, refresh the process PATH, and verify that a 10.x SDK is actually visible before continuing.
+The updater verifies a .NET 10 SDK. If missing and `winget` is available, it may install `Microsoft.DotNet.SDK.10`, refresh the current process PATH, and verify that a 10.x SDK is actually visible before continuing.
 
-Third-party dependencies should use the newest stable, well-documented version unless the project has a documented reason to pin another version.
+Third-party dependencies use the newest stable, well-documented version unless a documented project reason requires a pin.
 
 ## Mandatory acceptance checks
 
-Before calling the updater stable, test at least: fresh folder containing only `upgrade.cmd`; existing clean checkout; immediate second run; mapped network drive; path containing spaces; wrong/missing repository; tracked and staged local changes; harmless native stderr; missing .NET SDK; build failure before deploy; missing staged artifact; successful publish of `dist\wtf.exe`; and a self-update in which `upgrade.cmd` changes while the older repository copy is still the original entry point.
+Before the updater is treated as stable, verify at least:
+
+- fresh folder containing only `upgrade.cmd`;
+- existing clean checkout;
+- immediate second run (idempotence);
+- mapped network drive;
+- UNC path where applicable;
+- path containing spaces;
+- wrong/missing repository;
+- dubious-owner/safe.directory handling;
+- tracked and staged real local changes;
+- updater-only local differences;
+- harmless native stderr;
+- missing .NET SDK;
+- build failure before deploy;
+- missing staged artifact;
+- successful network-safe publish of `dist\wtf.exe`;
+- previous `dist` preserved after failed deployment;
+- self-update where Git replaces repository `upgrade.cmd` while the temporary launcher is running;
+- readable localized UTF-8 console output.
 
 GitHub Actions on `windows-latest` must restore, build, publish `win-x64`, and verify `wtf.exe` and `wtf.dll` before a development revision is treated as buildable.
 
@@ -97,19 +147,22 @@ GitHub Actions on `windows-latest` must restore, build, publish `win-x64`, and v
 Do not reintroduce these classes of bugs:
 
 - assuming `.git` already exists in a new project directory;
-- interpreting a Git ownership problem as permission to clone a nested repository;
-- executing a batch updater while Git replaces that same file, then resuming execution from the replaced file;
+- interpreting Git dubious ownership as permission to bootstrap/clone;
+- letting a repository batch file continue reading after Git has replaced that same running file;
+- adding a remote temporary CMD layer when temporary `upgrade.ps1` is sufficient;
 - LF-only executable temporary `.cmd` files;
-- deep CMD/PowerShell nesting and fragile quoting;
+- deep `CMD -> PowerShell -> CMD -> PowerShell` nesting and fragile quoting;
 - bootstrap updater files being misclassified as user changes;
-- PowerShell native-command wrappers using automatic variable names such as `$args`;
+- PowerShell native wrappers using automatic variable names such as `$args`;
+- ambiguous positional argument-array binding that invokes bare `git.exe`;
+- treating native stderr as fatal PowerShell failure;
+- raw CRLF/LF byte comparison used as Git cleanliness logic;
 - build output written directly into live `dist`;
 - renaming whole staging directories as the deployment primitive on SMB/network shares;
-- deleting the previous `dist` before the new artifacts are verified;
-- treating native stderr as a fatal PowerShell error;
+- deleting previous `dist` before new artifacts are verified;
 - failing to verify final branch/commit identity;
-- relying on mapped drive visibility after elevation;
+- relying on mapped-drive visibility after elevation;
 - hiding failure details by appending multiple runs into one log;
 - unreadable localized console output caused by codepage/UTF-8 mismatch.
 
-If the same class of upgrade failure is attempted three times without a solution, stop variations, preserve the failing log, roll back to the last known-good state, research authoritative/maintainer guidance, then implement a different evidence-based approach and document the new failure mode here.
+If the same class of upgrade failure is attempted three times without a solution, stop variants, preserve the failing log, roll back to the last known-good design, research authoritative guidance, then implement a different evidence-based approach and document the failure mode here.
