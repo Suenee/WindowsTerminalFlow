@@ -3,11 +3,12 @@ cls
 chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
 
-set "WTF_UPDATER_REV=1.02-bootstrap"
+set "WTF_UPDATER_REV=1.03-bootstrap"
 set "WTF_BRANCH=DEVEL"
 set "WTF_REPO_URL=https://github.com/Suenee/WindowsTerminalFlow.git"
 
 if /I "%~1"=="--bootstrap-internal" goto :bootstrap_internal
+if /I "%~1"=="--repository-internal" goto :repository_internal
 if not "%~1"=="" (
   call :msg red "ERROR: Unknown upgrade option."
   exit /b 2
@@ -51,11 +52,42 @@ call :msg cyan "[SELF-UPDATE] Fetching !WTF_BRANCH!..."
 git fetch origin !WTF_BRANCH! >>"!UPGRADE_LOG!" 2>&1
 if errorlevel 1 goto :fail_repo
 
+set "TEMP_LAUNCHER=%TEMP%\wtf-upgrade-launcher-%RANDOM%-%RANDOM%.cmd"
+set "TEMP_LAUNCHER_LF=%TEMP%\wtf-upgrade-launcher-%RANDOM%-%RANDOM%.tmp"
+git show origin/!WTF_BRANCH!:upgrade.cmd > "!TEMP_LAUNCHER_LF!" 2>>"!UPGRADE_LOG!"
+if errorlevel 1 goto :fail_self
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:TEMP_LAUNCHER_LF; $o=$env:TEMP_LAUNCHER; $t=[IO.File]::ReadAllText($p); $t=$t -replace '`r?`n','`r`n'; [IO.File]::WriteAllText($o,$t,[Text.UTF8Encoding]::new($false))"
+if errorlevel 1 goto :fail_self
+del /q "!TEMP_LAUNCHER_LF!" >nul 2>&1
+
+popd
+call "!TEMP_LAUNCHER!" --repository-internal "!ACTIVE_DIR!"
+set "RC=!ERRORLEVEL!"
+del /q "!TEMP_LAUNCHER!" >nul 2>&1
+exit /b !RC!
+
+:repository_internal
+set "ACTIVE_DIR=%~2"
+if "!ACTIVE_DIR:~-1!"=="\" set "ACTIVE_DIR=!ACTIVE_DIR:~0,-1!"
+pushd "!ACTIVE_DIR!" >nul 2>&1
+if errorlevel 1 (
+  call :msg red "ERROR: Cannot access repository: !ACTIVE_DIR!"
+  exit /b 1
+)
+if not exist "logs" mkdir "logs" >nul 2>&1
+set "UPGRADE_LOG=!CD!\logs\upgrade.log"
+set "GIT_CONFIG_COUNT=1"
+set "GIT_CONFIG_KEY_0=safe.directory"
+set "GIT_CONFIG_VALUE_0=!CD!"
 set "TEMP_RUNNER=%TEMP%\wtf-upgrade-%RANDOM%-%RANDOM%.ps1"
 git show origin/!WTF_BRANCH!:upgrade.ps1 > "!TEMP_RUNNER!" 2>>"!UPGRADE_LOG!"
-if errorlevel 1 goto :fail_self
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "!TEMP_RUNNER!" -RepoDir "!ACTIVE_DIR!" -Branch "!WTF_BRANCH!"
+if errorlevel 1 (
+  call :msg red "ERROR: Unable to load current upgrade.ps1."
+  >>"!UPGRADE_LOG!" echo STATUS: FAILED - phase=SELF-UPDATE
+  popd
+  exit /b 1
+)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "!TEMP_RUNNER!" -RepoDir "!CD!" -Branch "!WTF_BRANCH!"
 set "RC=!ERRORLEVEL!"
 del /q "!TEMP_RUNNER!" >nul 2>&1
 popd
@@ -155,8 +187,10 @@ popd
 exit /b 1
 
 :fail_self
-call :msg red "ERROR: Unable to load current upgrade.ps1."
->>"!UPGRADE_LOG!" echo STATUS: FAILED - phase=SELF-UPDATE
+call :msg red "ERROR: Unable to load current upgrade launcher."
+if defined UPGRADE_LOG >>"!UPGRADE_LOG!" echo STATUS: FAILED - phase=SELF-UPDATE
+if defined TEMP_LAUNCHER_LF del /q "!TEMP_LAUNCHER_LF!" >nul 2>&1
+if defined TEMP_LAUNCHER del /q "!TEMP_LAUNCHER!" >nul 2>&1
 popd
 exit /b 1
 
