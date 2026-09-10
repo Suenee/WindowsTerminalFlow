@@ -10,13 +10,15 @@ $LogDir = Join-Path $RepoDir 'logs'
 $LogFile = Join-Path $LogDir 'upgrade.log'
 $Phase = 'BOOTSTRAP'
 $WarningCount = 0
+$UseColor = -not $env:NO_COLOR -and -not [Console]::IsOutputRedirected
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-function Write-Step([string]$Text) { Write-Host $Text -ForegroundColor Gray; Add-Content $LogFile $Text }
-function Write-Ok([string]$Text) { Write-Host $Text -ForegroundColor Green; Add-Content $LogFile $Text }
-function Write-Warn([string]$Text) { $script:WarningCount++; Write-Host $Text -ForegroundColor Yellow; Add-Content $LogFile "WARNING: $Text" }
-function Fail([string]$Text) { Write-Host "ERROR: $Text" -ForegroundColor Red; Add-Content $LogFile "ERROR: $Text"; Add-Content $LogFile "STATUS: FAILED - phase=$script:Phase"; exit 1 }
+function Out-Console([string]$Text, [ConsoleColor]$Color) { if ($script:UseColor) { Write-Host $Text -ForegroundColor $Color } else { Write-Host $Text } }
+function Write-Step([string]$Text) { Out-Console $Text Gray; Add-Content $LogFile $Text }
+function Write-Ok([string]$Text) { Out-Console $Text Green; Add-Content $LogFile $Text }
+function Write-Warn([string]$Text) { $script:WarningCount++; Out-Console $Text Yellow; Add-Content $LogFile "WARNING: $Text" }
+function Fail([string]$Text) { Out-Console "ERROR: $Text" Red; Add-Content $LogFile "ERROR: $Text"; Add-Content $LogFile "STATUS: FAILED - phase=$script:Phase"; exit 1 }
 function Native([string]$File, [string[]]$Args) {
     & $File @Args 2>&1 | ForEach-Object { Add-Content $LogFile $_; Write-Host $_ }
     $code = $LASTEXITCODE
@@ -66,8 +68,8 @@ try {
     Native dotnet @('build','WindowsTerminalFlow.sln','-c','Release','--no-restore')
 
     $Phase = 'DIST'
-    Write-Step '[DIST] Publishing...'
-    Native dotnet @('publish','src\WindowsTerminalFlow\WindowsTerminalFlow.csproj','-c','Release','--no-build','-r','win-x64','--self-contained','false','-o','dist')
+    Write-Step '[DIST] Publishing win-x64...'
+    Native dotnet @('publish','src\WindowsTerminalFlow\WindowsTerminalFlow.csproj','-c','Release','-r','win-x64','--self-contained','false','-o','dist')
 
     $Phase = 'VERIFY'
     $exe = Join-Path $RepoDir 'dist\wtf.exe'

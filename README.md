@@ -19,11 +19,11 @@ wtf setup      Open application-wide settings.
 
 On first use, WTF discovers all direct subdirectories and sorts them by name. A known workspace uses its saved order. Closing a tab with its `×` button disables that folder for the next launch. `wtf config` provides checkboxes and drag-and-drop ordering. Newly discovered folders are appended and enabled by default. `wtf load` re-enables all folders that currently exist.
 
-Application settings live under `%APPDATA%\WindowsTerminalFlow`. Runtime launch requests and logs live under `%LOCALAPPDATA%\WindowsTerminalFlow`. Repository location may be local, mapped, or UNC/network storage.
+Application settings live under `%APPDATA%\WindowsTerminalFlow`. Runtime launch requests and logs live under `%LOCALAPPDATA%\WindowsTerminalFlow`. Repository location may be local, mapped, or UNC/network storage. Before crossing the UAC boundary WTF resolves mapped network drives to UNC paths; CMD sessions use `pushd` for UNC working directories.
 
 ## Administrator mode
 
-The default mode is elevated. The first unelevated launch stores the current directory and arguments and asks for UAC once to register `WindowsTerminalFlow Elevated Launcher` in Windows Task Scheduler with highest privileges. Later starts request that registered task and do not prompt for UAC again. The scheduled task itself is only a short-lived elevated dispatcher; it starts the requested WTF window and exits, so multiple WTF workspaces can coexist. WTF does not disable or weaken UAC globally.
+The default mode is elevated. The first unelevated launch stores the current directory and arguments and asks for UAC once to register `WindowsTerminalFlow Elevated Launcher` in Windows Task Scheduler with highest privileges. Later starts request that registered task and do not prompt for UAC again. The scheduled task is configured for parallel requests, allowing multiple WTF workspaces to coexist. WTF does not disable or weaken UAC globally.
 
 If the executable moves, use `wtf setup` and **Repair elevated launcher**.
 

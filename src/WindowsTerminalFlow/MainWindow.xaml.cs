@@ -28,6 +28,7 @@ public partial class MainWindow : Window
         {
             "powershell.exe" => $"powershell.exe -NoExit -Command \"Set-Location -LiteralPath '{escapedPowerShellPath}'\"",
             "pwsh.exe" => $"pwsh.exe -NoExit -Command \"Set-Location -LiteralPath '{escapedPowerShellPath}'\"",
+            _ when path.StartsWith("\\\\", StringComparison.Ordinal) => $"cmd.exe /D /K pushd \"{path}\"",
             _ => $"cmd.exe /D /K cd /d \"{path}\""
         };
     }

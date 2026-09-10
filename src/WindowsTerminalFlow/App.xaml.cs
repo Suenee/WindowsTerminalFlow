@@ -41,7 +41,7 @@ public partial class App : Application
                 return;
             }
 
-            var cwd = Environment.CurrentDirectory;
+            var cwd = PathResolver.ForElevation(Environment.CurrentDirectory);
             if (!ElevatedLauncher.IsAdministrator())
             {
                 var requestFile = LaunchRequestStore.Write(new LaunchRequest(cwd, args.ToArray()));

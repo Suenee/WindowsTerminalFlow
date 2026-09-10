@@ -63,7 +63,7 @@ public static class ElevatedLauncher
         var taskName = TaskName.Replace("'", "''");
         var ps = $"$a=New-ScheduledTaskAction -Execute '{exe}' -Argument '--scheduled-launcher';" +
                  $"$p=New-ScheduledTaskPrincipal -UserId '{user}' -LogonType Interactive -RunLevel Highest;" +
-                 "$s=New-ScheduledTaskSettingsSet -MultipleInstances Parallel -ExecutionTimeLimit (New-TimeSpan -Minutes 1);" +
+                 "$s=New-ScheduledTaskSettingsSet -MultipleInstances Parallel;" +
                  "$t=New-ScheduledTask -Action $a -Principal $p -Settings $s;" +
                  $"Register-ScheduledTask -TaskName '{taskName}' -InputObject $t -Force | Out-Null";
 
