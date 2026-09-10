@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$UpdaterRevision = '1.01'
+$UpdaterRevision = '1.02'
 $RepoDir = [IO.Path]::GetFullPath($RepoDir).TrimEnd('\')
 $LogDir = Join-Path $RepoDir 'logs'
 $LogFile = Join-Path $LogDir 'upgrade.log'
@@ -29,11 +29,16 @@ function Fail([string]$Text) {
     Add-Content $LogFile "STATUS: FAILED - phase=$script:Phase"
     exit 1
 }
-function Invoke-Native([string]$File, [string[]]$Args, [switch]$Quiet) {
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory=$true)][string]$File,
+        [Parameter(Mandatory=$true)][string[]]$ArgumentList,
+        [switch]$Quiet
+    )
     $oldPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        $output = & $File @Args 2>&1
+        $output = & $File @ArgumentList 2>&1
         $code = $LASTEXITCODE
     }
     finally {
@@ -42,7 +47,11 @@ function Invoke-Native([string]$File, [string[]]$Args, [switch]$Quiet) {
     foreach ($item in @($output)) {
         $line = $item.ToString()
         Add-Content $LogFile $line
-        if (-not $Quiet) { Write-Host $line }
+        if (-not $Quiet) {
+            if ($line -match '(?i)\b(error|failed|fatal)\b') { Out-Console $line Red }
+            elseif ($line -match '(?i)\bwarning\b') { Out-Console $line Yellow }
+            else { Out-Console $line Gray }
+        }
     }
     if ($code -ne 0) { throw "$File exited with code $code" }
     return @($output)
@@ -57,20 +66,20 @@ try {
 
     $Phase = 'REPOSITORY'
     Write-Step '[REPOSITORY] Verifying repository identity and working tree...'
-    $origin = (Invoke-Native git @('remote','get-url','origin') -Quiet | Select-Object -First 1).ToString().Trim()
+    $origin = (Invoke-Native -File 'git.exe' -ArgumentList @('remote','get-url','origin') -Quiet | Select-Object -First 1).ToString().Trim()
     if ($origin -notmatch '(?i)github\.com[:/]Suenee/WindowsTerminalFlow(?:\.git)?$') {
         Fail "Unexpected origin URL: $origin"
     }
 
-    $dirty = Invoke-Native git @('status','--porcelain','--untracked-files=no') -Quiet
+    $dirty = Invoke-Native -File 'git.exe' -ArgumentList @('status','--porcelain','--untracked-files=no') -Quiet
     if (@($dirty).Count -gt 0) { Fail 'Tracked or staged local changes detected. Commit or revert them before upgrade.' }
 
-    Invoke-Native git @('fetch','origin',$Branch) | Out-Null
-    Invoke-Native git @('checkout',$Branch) | Out-Null
-    Invoke-Native git @('reset','--hard',"origin/$Branch") | Out-Null
+    Invoke-Native -File 'git.exe' -ArgumentList @('fetch','origin',$Branch) | Out-Null
+    Invoke-Native -File 'git.exe' -ArgumentList @('checkout',$Branch) | Out-Null
+    Invoke-Native -File 'git.exe' -ArgumentList @('reset','--hard',"origin/$Branch") | Out-Null
 
-    $head = (Invoke-Native git @('rev-parse','HEAD') -Quiet | Select-Object -First 1).ToString().Trim()
-    $remoteHead = (Invoke-Native git @('rev-parse',"origin/$Branch") -Quiet | Select-Object -First 1).ToString().Trim()
+    $head = (Invoke-Native -File 'git.exe' -ArgumentList @('rev-parse','HEAD') -Quiet | Select-Object -First 1).ToString().Trim()
+    $remoteHead = (Invoke-Native -File 'git.exe' -ArgumentList @('rev-parse',"origin/$Branch") -Quiet | Select-Object -First 1).ToString().Trim()
     if ($head -ne $remoteHead) { Fail "HEAD does not match origin/$Branch after synchronization." }
     Add-Content $LogFile "Synchronized commit: $head"
 
@@ -78,17 +87,17 @@ try {
     Write-Step '[DEPENDENCIES] Checking .NET 10 SDK...'
     $dotnetOk = $false
     if (Get-Command dotnet.exe -ErrorAction SilentlyContinue) {
-        $sdks = Invoke-Native dotnet @('--list-sdks') -Quiet
+        $sdks = Invoke-Native -File 'dotnet.exe' -ArgumentList @('--list-sdks') -Quiet
         $dotnetOk = @($sdks | ForEach-Object { $_.ToString() } | Where-Object { $_ -match '^10\.' }).Count -gt 0
         foreach ($sdk in @($sdks)) { Add-Content $LogFile ("SDK: " + $sdk.ToString()) }
     }
     if (-not $dotnetOk) {
         if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) { Fail '.NET 10 SDK is missing and winget is unavailable.' }
         Write-Step '[DEPENDENCIES] Installing .NET 10 SDK...'
-        Invoke-Native winget @('install','--id','Microsoft.DotNet.SDK.10','--exact','--accept-source-agreements','--accept-package-agreements','--silent') | Out-Null
+        Invoke-Native -File 'winget.exe' -ArgumentList @('install','--id','Microsoft.DotNet.SDK.10','--exact','--accept-source-agreements','--accept-package-agreements','--silent') | Out-Null
         $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
         if (-not (Get-Command dotnet.exe -ErrorAction SilentlyContinue)) { Fail '.NET SDK installation completed but dotnet.exe is still unavailable.' }
-        $sdks = Invoke-Native dotnet @('--list-sdks') -Quiet
+        $sdks = Invoke-Native -File 'dotnet.exe' -ArgumentList @('--list-sdks') -Quiet
         $dotnetOk = @($sdks | ForEach-Object { $_.ToString() } | Where-Object { $_ -match '^10\.' }).Count -gt 0
         if (-not $dotnetOk) { Fail 'Installed .NET SDK does not include version 10.x.' }
     }
@@ -102,15 +111,15 @@ try {
 
     $Phase = 'RESTORE'
     Write-Step '[RESTORE] Restoring NuGet packages...'
-    Invoke-Native dotnet @('restore','WindowsTerminalFlow.sln') | Out-Null
+    Invoke-Native -File 'dotnet.exe' -ArgumentList @('restore','WindowsTerminalFlow.sln') | Out-Null
 
     $Phase = 'BUILD'
     Write-Step '[BUILD] Building WindowsTerminalFlow 1.00...'
-    Invoke-Native dotnet @('build','WindowsTerminalFlow.sln','-c','Release','--no-restore') | Out-Null
+    Invoke-Native -File 'dotnet.exe' -ArgumentList @('build','WindowsTerminalFlow.sln','-c','Release','--no-restore') | Out-Null
 
     $Phase = 'DIST'
     Write-Step '[DIST] Publishing win-x64 into isolated staging directory...'
-    Invoke-Native dotnet @('publish','src\WindowsTerminalFlow\WindowsTerminalFlow.csproj','-c','Release','-r','win-x64','--self-contained','false','--no-build','-o',$StageDir) | Out-Null
+    Invoke-Native -File 'dotnet.exe' -ArgumentList @('publish','src\WindowsTerminalFlow\WindowsTerminalFlow.csproj','-c','Release','-r','win-x64','--self-contained','false','--no-build','-o',$StageDir) | Out-Null
 
     $Phase = 'VERIFY'
     $stagedExe = Join-Path $StageDir 'wtf.exe'
