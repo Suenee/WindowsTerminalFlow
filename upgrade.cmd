@@ -3,7 +3,7 @@ cls
 chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
 
-set "WTF_UPDATER_REV=1.06-bootstrap"
+set "WTF_UPDATER_REV=1.07-bootstrap"
 set "WTF_BRANCH=DEVEL"
 set "WTF_REPO_URL=https://github.com/Suenee/WindowsTerminalFlow.git"
 
@@ -30,6 +30,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem IMPORTANT: keep the repository path in the environment as well as argv.
+rem Older launchers and a self-replaced batch can lose argv after Git rewrites the
+rem working-tree copy, while environment state survives the child handoff.
+set "WTF_REPO_DIR=!REPO_DIR!"
+
 rem IMPORTANT: keep this as one physical line. The temporary child may replace this
 rem repository file. No later line from this file may be required for completion.
 call "!TEMP_LAUNCHER!" --temp-runner "!REPO_DIR!" & set "WTF_RC=!ERRORLEVEL!" & del /q "!TEMP_LAUNCHER!" >nul 2>&1 & exit /b !WTF_RC!
@@ -51,11 +56,13 @@ goto :temp_runner_common
 set "REPO_DIR=%~2"
 
 :temp_runner_common
+if not defined REPO_DIR if defined WTF_REPO_DIR set "REPO_DIR=!WTF_REPO_DIR!"
 if not defined REPO_DIR (
   call :msg red "ERROR: Upgrade repository path is empty."
   exit /b 2
 )
 if "!REPO_DIR:~-1!"=="\" set "REPO_DIR=!REPO_DIR:~0,-1!"
+set "WTF_REPO_DIR=!REPO_DIR!"
 
 pushd "!REPO_DIR!" >nul 2>&1
 if errorlevel 1 (
@@ -148,6 +155,7 @@ if errorlevel 1 (
   exit /b 1
 )
 set "REPO_DIR=!BOOTSTRAP_TARGET!"
+set "WTF_REPO_DIR=!REPO_DIR!"
 set "ACTIVE_DIR=%CD%"
 set "GIT_CONFIG_COUNT=1"
 set "GIT_CONFIG_KEY_0=safe.directory"
