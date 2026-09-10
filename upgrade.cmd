@@ -164,6 +164,8 @@ if defined NO_COLOR (
   echo %~2
   exit /b 0
 )
+set "WTF_MSG=%~2"
 powershell.exe -NoProfile -Command "Write-Host $env:WTF_MSG -ForegroundColor %~1" 2>nul
+set "WTF_MSG="
 if errorlevel 1 echo %~2
 exit /b 0
