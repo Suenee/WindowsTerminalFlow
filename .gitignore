@@ -1,6 +1,8 @@
 bin/
 obj/
 dist/
+.upgrade-stage/
+.upgrade-dist-backup/
 .vs/
 .idea/
 *.user
