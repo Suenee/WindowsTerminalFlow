@@ -1,8 +1,9 @@
 @echo off
 cls
+chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
 
-set "WTF_UPDATER_REV=1.01-bootstrap"
+set "WTF_UPDATER_REV=1.02-bootstrap"
 set "WTF_BRANCH=DEVEL"
 set "WTF_REPO_URL=https://github.com/Suenee/WindowsTerminalFlow.git"
 
