@@ -4,6 +4,18 @@ WindowsTerminalFlow is a lightweight Windows terminal workspace manager. It turn
 
 Current development version: **1.00** on branch `DEVEL`.
 
+## First installation / fresh folder
+
+The supported bootstrap path is intentionally simple:
+
+1. Create or use an empty target folder.
+2. Put only `upgrade.cmd` into that folder.
+3. Run `upgrade.cmd`.
+
+If no Git repository exists, the launcher copies itself to `%TEMP%`, removes the bootstrap copy from the target, clones `Suenee/WindowsTerminalFlow` branch `DEVEL` directly into the same folder, and hands control to the current repository `upgrade.cmd`. The bootstrap refuses to clone over unrelated files. Mapped and UNC/network locations are supported.
+
+For an existing checkout, the same `upgrade.cmd` self-updates through the current remote `upgrade.ps1`, synchronizes `DEVEL`, verifies dependencies, builds in isolated output, verifies artifacts, and only then replaces `dist`.
+
 ## Commands
 
 ```text
