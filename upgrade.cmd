@@ -3,13 +3,18 @@ cls
 chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
 
-set "WTF_UPDATER_REV=1.05-bootstrap"
+set "WTF_UPDATER_REV=1.06-bootstrap"
 set "WTF_BRANCH=DEVEL"
 set "WTF_REPO_URL=https://github.com/Suenee/WindowsTerminalFlow.git"
 
+rem Backward-compatible internal entry points used by older WTF launchers.
+rem Never remove an internal handoff option until all supported older launchers
+rem can reach a newer authoritative runner without using it.
 if /I "%~1"=="--temp-runner" goto :temp_runner
+if /I "%~1"=="--repository-internal" goto :legacy_repository_internal
+if /I "%~1"=="--bootstrap-internal" goto :legacy_bootstrap_internal
 if not "%~1"=="" (
-  call :msg red "ERROR: Unknown upgrade option."
+  call :msg red "ERROR: Unknown upgrade option: %~1"
   exit /b 2
 )
 
@@ -29,8 +34,27 @@ rem IMPORTANT: keep this as one physical line. The temporary child may replace t
 rem repository file. No later line from this file may be required for completion.
 call "!TEMP_LAUNCHER!" --temp-runner "!REPO_DIR!" & set "WTF_RC=!ERRORLEVEL!" & del /q "!TEMP_LAUNCHER!" >nul 2>&1 & exit /b !WTF_RC!
 
+:legacy_repository_internal
+rem WTF 1.03/1.04 launchers call the freshly fetched launcher this way.
+rem Treat it exactly as the current temporary-runner entry point.
+set "REPO_DIR=%~2"
+goto :temp_runner_common
+
+:legacy_bootstrap_internal
+rem Older bootstrap launchers passed the target folder as argument 2.
+rem The caller itself already runs from a temporary copy, so continue through the
+rem same safe bootstrap/repository discovery path rather than chaining another CMD.
+set "REPO_DIR=%~2"
+goto :temp_runner_common
+
 :temp_runner
 set "REPO_DIR=%~2"
+
+:temp_runner_common
+if not defined REPO_DIR (
+  call :msg red "ERROR: Upgrade repository path is empty."
+  exit /b 2
+)
 if "!REPO_DIR:~-1!"=="\" set "REPO_DIR=!REPO_DIR:~0,-1!"
 
 pushd "!REPO_DIR!" >nul 2>&1
