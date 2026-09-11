@@ -8,9 +8,9 @@
     <Nullable>enable</Nullable>
     <AssemblyName>wtf</AssemblyName>
     <RootNamespace>WindowsTerminalFlow</RootNamespace>
-    <Version>1.00</Version>
-    <FileVersion>1.0.0.0</FileVersion>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Version>1.01</Version>
+    <FileVersion>1.1.0.0</FileVersion>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
