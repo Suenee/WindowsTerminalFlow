@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Security.Principal;
 using System.Text;
+using System.Text.Json;
+using WindowsTerminalFlow.Models;
 
 namespace WindowsTerminalFlow.Services;
 
@@ -35,7 +37,7 @@ public static class ElevatedLauncher
 
             // schtasks /Run only confirms that Task Scheduler accepted the request.
             // A stale task may still point to an inaccessible mapped drive. Confirm that
-            // the elevated broker really consumed this launch request.
+            // the elevated side really consumed this launch request.
             for (var i = 0; i < 30; i++)
             {
                 if (!File.Exists(requestFile))
@@ -70,26 +72,39 @@ public static class ElevatedLauncher
         });
     }
 
+    // Compatibility path for tasks registered by 1.00. Do not delete the request here;
+    // the spawned --consume-request process is the single owner that consumes it.
     public static void DispatchPendingRequests()
     {
         Logger.Info("Legacy scheduled launcher dispatcher started.");
         foreach (var requestFile in LaunchRequestStore.GetPendingFiles())
         {
-            var request = LaunchRequestStore.ReadAndDelete(requestFile);
-            var executable = request.ExecutablePath;
-            if (string.IsNullOrWhiteSpace(executable) || !File.Exists(executable))
+            try
             {
-                Logger.Warn($"Cannot dispatch request because executable is unavailable: {executable}");
-                continue;
-            }
+                var request = JsonSerializer.Deserialize<LaunchRequest>(File.ReadAllText(requestFile));
+                var executable = request?.ExecutablePath;
+                if (string.IsNullOrWhiteSpace(executable))
+                    executable = PathResolver.ForElevation(Environment.ProcessPath!);
 
-            Process.Start(new ProcessStartInfo
+                if (!File.Exists(executable))
+                {
+                    Logger.Warn($"Cannot dispatch request because executable is unavailable: {executable}");
+                    continue;
+                }
+
+                Logger.Info($"Legacy dispatcher launching: {executable}");
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = executable,
+                    Arguments = $"--consume-request \"{requestFile}\"",
+                    UseShellExecute = false,
+                    WorkingDirectory = Environment.SystemDirectory
+                });
+            }
+            catch (Exception ex)
             {
-                FileName = executable,
-                Arguments = $"--consume-request \"{requestFile}\"",
-                UseShellExecute = false,
-                WorkingDirectory = Environment.SystemDirectory
-            });
+                Logger.Error(ex, $"Legacy dispatcher failed for request {requestFile}");
+            }
         }
     }
 
