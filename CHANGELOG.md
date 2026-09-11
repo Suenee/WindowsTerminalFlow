@@ -11,6 +11,8 @@
 - Implemented operational application logging for `off`, `single`, and `all` modes.
 - Added run IDs and logging for startup, elevation handoff, launch requests, workspace discovery, tab creation/closing, settings, and failures.
 - Added current executable and logical-run metadata to elevated launch requests so network and relocated installations can be launched safely.
+- The updater now derives the current `dist` directory from its actual repository location and registers it in the current user's `PATH` without duplicate entries.
+- The updater tracks the PATH entry it owns under `%LOCALAPPDATA%\WindowsTerminalFlow` so a later repository move can replace the previous WTF path safely without touching unrelated PATH entries.
 - Updated documentation for local, mapped, and UNC operation.
 
 ## 1.00 - 10.09.2026
