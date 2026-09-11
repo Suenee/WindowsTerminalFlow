@@ -16,6 +16,10 @@ If no Git repository exists, the launcher copies itself to `%TEMP%`, removes the
 
 For an existing checkout, the same `upgrade.cmd` self-updates through the current remote `upgrade.ps1`, synchronizes `DEVEL`, verifies dependencies, builds in isolated output, verifies artifacts, and only then replaces `dist`.
 
+After a successful deployment, the updater derives the absolute `dist` path from the actual repository location and ensures that path is present exactly once in the current user's `PATH`. No hard-coded drive or repository path is used. The updater records the PATH entry it owns under `%LOCALAPPDATA%\WindowsTerminalFlow\path-entry.txt`; if the repository is later moved and `upgrade.cmd` is run from the new location, the previously tracked WTF PATH entry is removed and replaced with the new `dist` path without changing unrelated PATH entries. SYSTEM PATH is never modified.
+
+An already-open command prompt cannot receive environment changes from a child process. Open a new terminal process after the first PATH registration; subsequent commands can then invoke `wtf` directly.
+
 ## Commands
 
 ```text
