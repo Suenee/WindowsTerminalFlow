@@ -2,11 +2,22 @@ namespace WindowsTerminalFlow.Services;
 
 public static class AppPaths
 {
-    public static string ConfigDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WindowsTerminalFlow");
-    public static string LocalDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WindowsTerminalFlow");
+    public static string ProjectDirectory
+    {
+        get
+        {
+            var baseDir = Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var name = Path.GetFileName(baseDir);
+            return name.Equals("dist", StringComparison.OrdinalIgnoreCase)
+                ? Directory.GetParent(baseDir)?.FullName ?? baseDir
+                : baseDir;
+        }
+    }
+
+    public static string ConfigDirectory => Path.Combine(ProjectDirectory, "config");
     public static string ConfigFile => Path.Combine(ConfigDirectory, "config.json");
     public static string WorkspacesFile => Path.Combine(ConfigDirectory, "workspaces.json");
-    public static string RequestsDirectory => Path.Combine(LocalDirectory, "requests");
-    public static string LogFile => Path.Combine(LocalDirectory, "logs", "wtf.log");
-    public static string ElevatedLauncherScript => Path.Combine(LocalDirectory, "elevated-launcher.ps1");
+    public static string RuntimeDirectory => Path.Combine(ProjectDirectory, ".runtime");
+    public static string RequestsDirectory => Path.Combine(RuntimeDirectory, "requests");
+    public static string LogFile => Path.Combine(ProjectDirectory, "logs", "wtf.log");
 }
