@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Security.Principal;
-using System.Text;
 using System.Text.Json;
 using WindowsTerminalFlow.Models;
 
@@ -74,11 +73,9 @@ public static class ElevatedLauncher
         Process.Start(psi);
     }
 
-    // Compatibility path for tasks registered by 1.00. Do not delete the request here;
-    // the spawned --consume-request process is the single owner that consumes it.
     public static void DispatchPendingRequests()
     {
-        Logger.Info("Legacy scheduled launcher dispatcher started.");
+        Logger.Info("Scheduled launcher dispatcher started.");
         foreach (var requestFile in LaunchRequestStore.GetPendingFiles())
         {
             try
@@ -94,7 +91,7 @@ public static class ElevatedLauncher
                     continue;
                 }
 
-                Logger.Info($"Legacy dispatcher launching: {executable}");
+                Logger.Info($"Scheduled dispatcher launching: {executable}");
                 var psi = new ProcessStartInfo
                 {
                     FileName = executable,
@@ -107,7 +104,7 @@ public static class ElevatedLauncher
             }
             catch (Exception ex)
             {
-                Logger.Error(ex, $"Legacy dispatcher failed for request {requestFile}");
+                Logger.Error(ex, $"Scheduled dispatcher failed for request {requestFile}");
             }
         }
     }
@@ -117,20 +114,17 @@ public static class ElevatedLauncher
         if (!IsAdministrator())
             throw new InvalidOperationException("Administrator rights are required to register the launcher.");
 
-        Directory.CreateDirectory(AppPaths.LocalDirectory);
-        WriteLocalBrokerScript();
-
-        var actionArguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{AppPaths.ElevatedLauncherScript}\"";
-        var actionArgumentsPs = actionArguments.Replace("'", "''");
+        var executable = PathResolver.ForElevation(Environment.ProcessPath!);
+        var executablePs = executable.Replace("'", "''");
         var user = WindowsIdentity.GetCurrent().Name.Replace("'", "''");
         var taskName = TaskName.Replace("'", "''");
-        var ps = $"$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '{actionArgumentsPs}';" +
+        var ps = $"$a=New-ScheduledTaskAction -Execute '{executablePs}' -Argument '--scheduled-launcher';" +
                  $"$p=New-ScheduledTaskPrincipal -UserId '{user}' -LogonType Interactive -RunLevel Highest;" +
                  "$s=New-ScheduledTaskSettingsSet -MultipleInstances Parallel;" +
                  "$t=New-ScheduledTask -Action $a -Principal $p -Settings $s;" +
                  $"Register-ScheduledTask -TaskName '{taskName}' -InputObject $t -Force | Out-Null";
 
-        Logger.Info($"Registering elevated launcher task with local broker: {AppPaths.ElevatedLauncherScript}");
+        Logger.Info($"Registering elevated launcher task directly against: {executable}");
         var psi = new ProcessStartInfo
         {
             FileName = "powershell.exe",
@@ -149,49 +143,5 @@ public static class ElevatedLauncher
             throw new InvalidOperationException($"Failed to register elevated launcher task. Exit code: {p?.ExitCode}");
 
         Logger.Info("Elevated launcher task registered successfully.");
-    }
-
-    private static void WriteLocalBrokerScript()
-    {
-        var requestsDirectory = AppPaths.RequestsDirectory.Replace("'", "''");
-        var logFile = AppPaths.LogFile.Replace("'", "''");
-        var script = $$"""
-$ErrorActionPreference = 'Continue'
-$requests = '{{requestsDirectory}}'
-$log = '{{logFile}}'
-$logging = 'off'
-try {
-    $config = Join-Path $env:APPDATA 'WindowsTerminalFlow\config.json'
-    if (Test-Path -LiteralPath $config) {
-        $cfg = Get-Content -LiteralPath $config -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($cfg.LoggingMode) { $logging = ([string]$cfg.LoggingMode).ToLowerInvariant() }
-    }
-} catch {}
-function Write-WtfLog([string]$message) {
-    if ($logging -eq 'off') { return }
-    try {
-        $dir = Split-Path -Parent $log
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        Add-Content -LiteralPath $log -Value (('{0:dd.MM.yyyy HH:mm:ss.fff} [INFO] broker pid={1} {2}' -f (Get-Date), $PID, $message)) -Encoding UTF8
-    } catch {}
-}
-if (-not (Test-Path -LiteralPath $requests)) { exit 0 }
-Get-ChildItem -LiteralPath $requests -Filter '*.json' -File | Sort-Object CreationTimeUtc | ForEach-Object {
-    $requestFile = $_.FullName
-    try {
-        $request = Get-Content -LiteralPath $requestFile -Raw -Encoding UTF8 | ConvertFrom-Json
-        $exe = [string]$request.ExecutablePath
-        if ([string]::IsNullOrWhiteSpace($exe) -or -not (Test-Path -LiteralPath $exe)) {
-            Write-WtfLog "Executable unavailable for request $requestFile : $exe"
-            return
-        }
-        Write-WtfLog "Launching $exe for request $requestFile"
-        Start-Process -FilePath $exe -ArgumentList @('--consume-request', ('"' + $requestFile + '"')) -WorkingDirectory $env:SystemRoot
-    } catch {
-        Write-WtfLog "Broker error for $requestFile : $($_.Exception.Message)"
-    }
-}
-""";
-        File.WriteAllText(AppPaths.ElevatedLauncherScript, script, new UTF8Encoding(false));
     }
 }
