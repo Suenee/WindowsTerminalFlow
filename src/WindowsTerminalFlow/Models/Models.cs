@@ -9,6 +9,7 @@ public sealed class AppSettings
     public string Shell { get; set; } = "cmd.exe";
     public int FontSize { get; set; } = 12;
     public bool NewFoldersEnabled { get; set; } = true;
+    public string? ManagedPathEntry { get; set; }
 }
 
 public sealed class WorkspaceStore
