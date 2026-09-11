@@ -8,4 +8,5 @@ public static class AppPaths
     public static string WorkspacesFile => Path.Combine(ConfigDirectory, "workspaces.json");
     public static string RequestsDirectory => Path.Combine(LocalDirectory, "requests");
     public static string LogFile => Path.Combine(LocalDirectory, "logs", "wtf.log");
+    public static string ElevatedLauncherScript => Path.Combine(LocalDirectory, "elevated-launcher.ps1");
 }
