@@ -6,7 +6,7 @@ namespace WindowsTerminalFlow;
 
 public partial class App : Application
 {
-    public const string Version = "1.01";
+    public const string Version = "1.02";
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -22,7 +22,7 @@ public partial class App : Application
             if (args.Contains("--scheduled-launcher", StringComparer.OrdinalIgnoreCase))
             {
                 Logger.Initialize(SettingsService.Settings.LoggingMode, startNewRun: false);
-                Logger.Info("Legacy scheduled launcher entry point started.");
+                Logger.Info("Scheduled launcher entry point started.");
                 ElevatedLauncher.DispatchPendingRequests();
                 Shutdown();
                 return;
@@ -122,8 +122,6 @@ public partial class App : Application
         if (command != "setup" && !Directory.Exists(workspace))
             throw new DirectoryNotFoundException($"{LocalizationService.Get("path_not_found")}: {workspace}");
 
-        // Never let embedded cmd.exe inherit a UNC current directory. Every shell receives
-        // its target directory explicitly in its startup command.
         Environment.CurrentDirectory = Environment.SystemDirectory;
 
         Logger.Info($"Opening UI; command={command}; workspace={workspace}; elevated={ElevatedLauncher.IsAdministrator()}");
