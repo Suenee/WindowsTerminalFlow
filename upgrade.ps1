@@ -4,13 +4,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$UpdaterRevision = '1.04'
+$UpdaterRevision = '1.05'
 $RepoDir = [IO.Path]::GetFullPath($RepoDir).TrimEnd('\')
 $LogDir = Join-Path $RepoDir 'logs'
 $LogFile = Join-Path $LogDir 'upgrade.log'
 $StageDir = Join-Path $RepoDir '.upgrade-stage'
 $BackupDir = Join-Path $RepoDir '.upgrade-dist-backup'
 $DistDir = Join-Path $RepoDir 'dist'
+$LocalStateDir = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'WindowsTerminalFlow'
+$PathStateFile = Join-Path $LocalStateDir 'path-entry.txt'
 $Phase = 'BOOTSTRAP'
 $WarningCount = 0
 $UseColor = -not $env:NO_COLOR -and -not [Console]::IsOutputRedirected
@@ -114,6 +116,101 @@ function Copy-TreeWithRetry {
         Copy-FileWithRetry -Source $file.FullName -Destination (Join-Path $Destination $relative)
     }
 }
+function Normalize-PathEntry([string]$Entry) {
+    if ([string]::IsNullOrWhiteSpace($Entry)) { return '' }
+    $value = $Entry.Trim().Trim('"')
+    try {
+        $expanded = [Environment]::ExpandEnvironmentVariables($value)
+        if ([IO.Path]::IsPathRooted($expanded)) {
+            $value = [IO.Path]::GetFullPath($expanded)
+        }
+    }
+    catch { }
+
+    $root = $null
+    try { $root = [IO.Path]::GetPathRoot($value) } catch { }
+    if (-not [string]::IsNullOrEmpty($root) -and $value.Length -gt $root.Length) {
+        $value = $value.TrimEnd('\','/')
+    }
+    return $value
+}
+function Ensure-UserPathEntry([string]$TargetPath) {
+    $target = [IO.Path]::GetFullPath($TargetPath).TrimEnd('\')
+    $targetNormalized = Normalize-PathEntry $target
+    $previousTracked = $null
+
+    if (Test-Path -LiteralPath $script:PathStateFile) {
+        try {
+            $previousTracked = (Get-Content -LiteralPath $script:PathStateFile -Raw -ErrorAction Stop).Trim()
+        }
+        catch { $previousTracked = $null }
+    }
+    $previousNormalized = if ([string]::IsNullOrWhiteSpace($previousTracked)) { '' } else { Normalize-PathEntry $previousTracked }
+
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($null -eq $userPath) { $userPath = '' }
+    $entries = if ($userPath.Length -eq 0) { @() } else { @($userPath -split ';') }
+    $newEntries = [System.Collections.Generic.List[string]]::new()
+    $foundTarget = $false
+    $removedDuplicate = $false
+    $removedPrevious = $false
+
+    foreach ($entry in $entries) {
+        if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+        $normalized = Normalize-PathEntry $entry
+
+        if ($normalized.Equals($targetNormalized, [StringComparison]::OrdinalIgnoreCase)) {
+            if (-not $foundTarget) {
+                $newEntries.Add($entry.Trim())
+                $foundTarget = $true
+            }
+            else {
+                $removedDuplicate = $true
+            }
+            continue
+        }
+
+        if ($previousNormalized -and
+            -not $previousNormalized.Equals($targetNormalized, [StringComparison]::OrdinalIgnoreCase) -and
+            $normalized.Equals($previousNormalized, [StringComparison]::OrdinalIgnoreCase)) {
+            $removedPrevious = $true
+            continue
+        }
+
+        $newEntries.Add($entry.Trim())
+    }
+
+    if (-not $foundTarget) {
+        $newEntries.Add($target)
+    }
+
+    $newUserPath = [string]::Join(';', $newEntries)
+    if ($newUserPath -ne $userPath) {
+        [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+    }
+
+    New-Item -ItemType Directory -Force -Path $script:LocalStateDir | Out-Null
+    Set-Content -LiteralPath $script:PathStateFile -Value $target -Encoding UTF8
+
+    $verifyPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $verifyFound = $false
+    foreach ($entry in @($verifyPath -split ';')) {
+        if ((Normalize-PathEntry $entry).Equals($targetNormalized, [StringComparison]::OrdinalIgnoreCase)) {
+            $verifyFound = $true
+            break
+        }
+    }
+    if (-not $verifyFound) { throw "Failed to register '$target' in USER PATH." }
+
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $env:PATH = if ([string]::IsNullOrWhiteSpace($machinePath)) { $verifyPath } else { "$machinePath;$verifyPath" }
+
+    if (-not $foundTarget) { Write-Ok "[PATH] Added WindowsTerminalFlow to USER PATH: $target" }
+    elseif ($removedDuplicate) { Write-Ok "[PATH] Removed duplicate WindowsTerminalFlow USER PATH entries: $target" }
+    else { Write-Step "[PATH] WindowsTerminalFlow already present in USER PATH: $target" }
+
+    if ($removedPrevious) { Write-Step "[PATH] Removed previous tracked WindowsTerminalFlow path: $previousTracked" }
+}
 
 try {
     Set-Content $LogFile "WindowsTerminalFlow upgrade runner $UpdaterRevision`r`nDate: $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')`r`nRepository: $RepoDir`r`nBranch: $Branch"
@@ -178,7 +275,7 @@ try {
     Invoke-Native -File 'dotnet.exe' -ArgumentList @('restore','WindowsTerminalFlow.sln') | Out-Null
 
     $Phase = 'BUILD'
-    Write-Step '[BUILD] Building WindowsTerminalFlow 1.00...'
+    Write-Step '[BUILD] Building WindowsTerminalFlow 1.01...'
     Invoke-Native -File 'dotnet.exe' -ArgumentList @('build','WindowsTerminalFlow.sln','-c','Release','--no-restore') | Out-Null
 
     $Phase = 'DIST'
@@ -227,11 +324,16 @@ try {
         Fail 'Deployment verification failed: required dist artifacts are missing.'
     }
 
+    $Phase = 'PATH'
+    Write-Step '[PATH] Ensuring the current dist directory is registered in USER PATH...'
+    Ensure-UserPathEntry -TargetPath $DistDir
+
     Remove-Generated $StageDir
     Remove-Generated $BackupDir
 
     $Phase = 'COMPLETE'
-    Write-Ok "WindowsTerminalFlow 1.00 ready: $exe"
+    Write-Ok "WindowsTerminalFlow 1.01 ready: $exe"
+    Write-Step '[PATH] New terminal processes can invoke WTF as: wtf'
     if ($WarningCount -gt 0) { Add-Content $LogFile 'STATUS: WARNING - phase=COMPLETE' }
     else { Add-Content $LogFile 'STATUS: SUCCESS - phase=COMPLETE' }
     exit 0
