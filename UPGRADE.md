@@ -10,6 +10,20 @@ The master standard is the current `UPGRADE.md` in `Suenee/FolderHeatMap` branch
 
 A fresh target may contain only `upgrade.cmd`. Repository data may be stored on local, mapped, or UNC/network paths. Network storage is a supported first-class configuration, not an exceptional case.
 
+All persistent WTF-owned data MUST live inside the project directory. WTF MUST NOT create configuration, logs, runtime state, helper scripts, launch metadata, or other persistent project data under `C:\*`, `%APPDATA%`, or `%LOCALAPPDATA%`. The only allowed system-drive scratch location is the standard `%TEMP%` directory, and temporary files created there must be disposable. Windows-owned state such as the USER PATH registry value and the Task Scheduler definition is not project file storage and may be updated when required by the application contract.
+
+The project-local runtime layout is:
+
+```text
+config\config.json
+config\workspaces.json
+.runtime\requests\
+logs\wtf.log
+logs\upgrade.log
+```
+
+`config\`, `.runtime\`, and `logs\` are runtime data and must remain ignored by Git. Upgrades from earlier development versions may read legacy WTF data under `%APPDATA%` / `%LOCALAPPDATA%`, migrate it into the project directory, and remove the obsolete legacy directories, but must not create new persistent state there.
+
 An interactive `upgrade.cmd` run MUST start with one `cls`. It MUST use the standard status colors when supported: normal/default for routine progress, yellow for warning/action required, red for error, green for successful completion. `NO_COLOR` disables color only; logs remain plain text.
 
 ## Required architecture
@@ -138,7 +152,9 @@ Before the updater is treated as stable, verify at least:
 - successful network-safe publish of `dist\wtf.exe`;
 - previous `dist` preserved after failed deployment;
 - self-update where Git replaces repository `upgrade.cmd` while the temporary launcher is running;
-- readable localized UTF-8 console output.
+- readable localized UTF-8 console output;
+- no persistent WTF-owned files created under `%APPDATA%`, `%LOCALAPPDATA%`, or any other `C:\*` location;
+- project-local config, runtime requests, and logs remain functional from mapped and UNC repositories.
 
 GitHub Actions on `windows-latest` must restore, build, publish `win-x64`, and verify `wtf.exe` and `wtf.dll` before a development revision is treated as buildable.
 
@@ -162,6 +178,7 @@ Do not reintroduce these classes of bugs:
 - deleting previous `dist` before new artifacts are verified;
 - failing to verify final branch/commit identity;
 - relying on mapped-drive visibility after elevation;
+- persisting WTF helper scripts, logs, configuration, or runtime metadata under `%APPDATA%` / `%LOCALAPPDATA%` instead of the project directory;
 - hiding failure details by appending multiple runs into one log;
 - unreadable localized console output caused by codepage/UTF-8 mismatch.
 
