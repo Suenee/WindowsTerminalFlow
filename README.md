@@ -2,7 +2,7 @@
 
 WindowsTerminalFlow is a lightweight Windows terminal workspace manager. It turns the direct subdirectories of a selected directory into terminal tabs, remembers their order and visibility, and restores the workspace on the next launch.
 
-Current development version: **1.01** on branch `DEVEL`.
+Current development version: **1.02** on branch `DEVEL`.
 
 ## First installation / fresh folder
 
@@ -16,7 +16,7 @@ If no Git repository exists, the launcher copies itself to `%TEMP%`, removes the
 
 For an existing checkout, the same `upgrade.cmd` self-updates through the current remote `upgrade.ps1`, synchronizes `DEVEL`, verifies dependencies, builds in isolated output, verifies artifacts, and only then replaces `dist`.
 
-After a successful deployment, the updater derives the absolute `dist` path from the actual repository location and ensures that path is present exactly once in the current user's `PATH`. No hard-coded drive or repository path is used. The updater records the PATH entry it owns under `%LOCALAPPDATA%\WindowsTerminalFlow\path-entry.txt`; if the repository is later moved and `upgrade.cmd` is run from the new location, the previously tracked WTF PATH entry is removed and replaced with the new `dist` path without changing unrelated PATH entries. SYSTEM PATH is never modified.
+After a successful deployment, the updater derives the absolute `dist` path from the actual repository location and ensures that path is present exactly once in the current user's `PATH`. No hard-coded drive or repository path is used. The owned PATH entry is stored in the project configuration at `config\config.json`. If the repository is later moved and `upgrade.cmd` is run from the new location, the previously tracked WTF PATH entry is removed and replaced with the new `dist` path without changing unrelated PATH entries. SYSTEM PATH is never modified.
 
 An already-open command prompt cannot receive environment changes from a child process. Open a new terminal process after the first PATH registration; subsequent commands can then invoke `wtf` directly.
 
@@ -40,13 +40,15 @@ Explicit workspace paths may be local paths, mapped-drive paths, or UNC paths.
 
 On first use, WTF discovers all direct subdirectories and sorts them by name. A known workspace uses its saved order. Closing a tab with its `×` button disables that folder for the next launch. `wtf config` provides checkboxes and drag-and-drop ordering. Newly discovered folders are appended and enabled by default. `wtf load` re-enables all folders that currently exist.
 
-Application settings live under `%APPDATA%\WindowsTerminalFlow`. Runtime launch requests and logs live under `%LOCALAPPDATA%\WindowsTerminalFlow`. Repository location may be local, mapped, or UNC/network storage. Before crossing the UAC boundary WTF resolves mapped network drives to UNC paths. Embedded CMD sessions start from a safe local process directory and then use `pushd` for UNC workspace folders so CMD does not emit an unsupported-UNC-current-directory warning.
+All persistent WTF-owned data lives inside the project directory. Application settings and workspace definitions are stored in `config\`. Launch requests use `.runtime\`, and application/upgrade logs use `logs\`. These directories are ignored by Git. WTF does not create persistent application data under `%APPDATA%` or `%LOCALAPPDATA%`. The only allowed C-drive scratch location is the standard system `%TEMP%` directory used by the updater bootstrap.
+
+Repository location may be local, mapped, or UNC/network storage. Before crossing the UAC boundary WTF resolves mapped network drives to UNC paths. Embedded CMD sessions start from a safe local process directory and then use `pushd` for UNC workspace folders so CMD does not emit an unsupported-UNC-current-directory warning.
 
 ## Administrator mode
 
-The default mode is elevated. The first unelevated launch stores the selected workspace, arguments, current executable path, and run identifier in a launch request and asks for UAC once to register `WindowsTerminalFlow Elevated Launcher` in Windows Task Scheduler with highest privileges.
+The default mode is elevated. The first unelevated launch stores the selected workspace, arguments, current executable path, and run identifier in a project-local launch request and asks for UAC once to register `WindowsTerminalFlow Elevated Launcher` in Windows Task Scheduler with highest privileges.
 
-The scheduled task does not point to the repository or to a mapped drive. It launches a small broker script stored under `%LOCALAPPDATA%\WindowsTerminalFlow`, and that broker starts the current WTF executable from the path stored in the request. This makes the elevated handoff independent of whether WTF itself lives on a local drive, a mapped network drive, or a UNC path. A stale 1.00 task is detected when it reports success but does not consume the pending request; WTF then asks for UAC once and repairs the task automatically.
+The scheduled task points directly to the current WTF executable using its elevation-safe path. A mapped executable location is converted to UNC before registration, so the task does not depend on the mapped drive letter being visible in the elevated context. No persistent broker script is installed on the system drive. If the task is stale or no longer points to the current installation, WTF detects that the pending request was not consumed and asks for UAC once to repair the task.
 
 The scheduled task is configured for parallel requests, allowing multiple WTF workspaces to coexist. WTF does not disable or weaken UAC globally.
 
@@ -58,7 +60,11 @@ Logging modes are configured through `wtf setup`:
 - `single` — the log is replaced at the beginning of each logical WTF launch and includes the complete elevation handoff for that run;
 - `all` — log records are appended across launches.
 
-The application log is `%LOCALAPPDATA%\WindowsTerminalFlow\logs\wtf.log`. Startup, elevation handoff, request lifecycle, workspace selection, folder discovery, tab creation/closing, configuration changes, and fatal errors are recorded when logging is enabled.
+The application log is `logs\wtf.log` inside the WTF project directory. Startup, elevation handoff, request lifecycle, workspace selection, folder discovery, tab creation/closing, configuration changes, and fatal errors are recorded when logging is enabled.
+
+## Upgrade migration
+
+Version 1.02 migrates configuration and workspace data created by earlier development versions from `%APPDATA%\WindowsTerminalFlow` into the project-local `config\` directory. It also migrates previously tracked PATH metadata and removes the obsolete WTF directories from `%APPDATA%` and `%LOCALAPPDATA%` after successful migration.
 
 ## Build
 
