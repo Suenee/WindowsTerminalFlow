@@ -1,6 +1,6 @@
 namespace WindowsTerminalFlow.Models;
 
-public sealed record LaunchRequest(string WorkingDirectory, string[] Arguments);
+public sealed record LaunchRequest(string WorkingDirectory, string[] Arguments, string? ExecutablePath = null, string? RunId = null);
 
 public sealed class AppSettings
 {
