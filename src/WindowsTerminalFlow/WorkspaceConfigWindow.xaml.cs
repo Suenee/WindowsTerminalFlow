@@ -23,14 +23,14 @@ public partial class WorkspaceConfigWindow : Window
         _items = new ObservableCollection<WorkspaceFolder>(WorkspaceService.Load(root).Folders.Select(x => new WorkspaceFolder { Name = x.Name, Enabled = x.Enabled }));
         FolderList.ItemsSource = _items;
         ApplyLanguage();
+        Logger.Info($"Workspace configuration opened: {root}; folders={_items.Count}");
     }
 
     private void ApplyLanguage()
     {
-        var en = SettingsService.Settings.Language.Equals("en", StringComparison.OrdinalIgnoreCase);
-        Title = en ? "WTF Workspace configuration" : "WTF Konfigurace workspace";
-        SaveButton.Content = en ? "Save" : "Uložit";
-        CancelButton.Content = en ? "Cancel" : "Zrušit";
+        Title = LocalizationService.Get("workspace_config");
+        SaveButton.Content = LocalizationService.Get("save");
+        CancelButton.Content = LocalizationService.Get("cancel");
     }
 
     private static ListBoxItem? FindItem(DependencyObject? source)
@@ -60,15 +60,24 @@ public partial class WorkspaceConfigWindow : Window
         if (targetItem?.DataContext is not WorkspaceFolder targetFolder) return;
         var oldIndex = _items.IndexOf(_dragged);
         var newIndex = _items.IndexOf(targetFolder);
-        if (oldIndex >= 0 && newIndex >= 0 && oldIndex != newIndex) _items.Move(oldIndex, newIndex);
+        if (oldIndex >= 0 && newIndex >= 0 && oldIndex != newIndex)
+        {
+            _items.Move(oldIndex, newIndex);
+            Logger.Info($"Workspace folder reordered: {_dragged.Name}; {oldIndex} -> {newIndex}");
+        }
         _dragged = null;
     }
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         WorkspaceService.Save(_root, new WorkspaceDefinition { Folders = _items.ToList() });
+        Logger.Info($"Workspace configuration saved: {_root}; enabled={_items.Count(x => x.Enabled)}/{_items.Count}");
         Close();
     }
 
-    private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
+    private void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        Logger.Info($"Workspace configuration cancelled: {_root}");
+        Close();
+    }
 }
