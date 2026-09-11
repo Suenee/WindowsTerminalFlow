@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.02 - 11.09.2026
+
+- Moved all persistent WTF-owned configuration, workspace state, launch requests, and logs into the project directory.
+- Added project-local `config\config.json`, `config\workspaces.json`, `.runtime\requests`, and `logs\wtf.log` paths.
+- Added `config\` and `.runtime\` to `.gitignore` so runtime state can safely coexist with a Git checkout, including network-hosted repositories.
+- Removed the persistent elevated-launcher broker from `%LOCALAPPDATA%`.
+- Registered the elevated Task Scheduler action directly against the current WTF executable using an elevation-safe path; mapped executable locations are converted to UNC before registration.
+- Added migration of settings, workspace definitions, PATH ownership metadata, and logs from the earlier `%APPDATA%` / `%LOCALAPPDATA%` development layout into the project directory.
+- Added cleanup of the obsolete WTF directories under `%APPDATA%` and `%LOCALAPPDATA%` after migration.
+- Moved the updater-owned USER PATH metadata into the existing project `config.json`; no separate `path-entry.txt` is created.
+- Kept dynamic USER PATH registration based on the actual repository `dist` location, including duplicate prevention and replacement of a previously tracked WTF entry.
+- Bumped the application and package version to 1.02.
+
 ## 1.01 - 11.09.2026
 
 - Added explicit workspace-path arguments: `wtf "path"`, `wtf config "path"`, and `wtf load "path"`.
