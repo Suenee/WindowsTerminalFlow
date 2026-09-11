@@ -21,13 +21,16 @@ public static class ElevatedLauncher
         try
         {
             Logger.Info($"Starting registered elevated task for request: {requestFile}");
-            using var p = Process.Start(new ProcessStartInfo
+            var psi = new ProcessStartInfo
             {
                 FileName = "schtasks.exe",
-                Arguments = $"/Run /TN \"{TaskName}\"",
                 UseShellExecute = false,
                 CreateNoWindow = true
-            });
+            };
+            psi.ArgumentList.Add("/Run");
+            psi.ArgumentList.Add("/TN");
+            psi.ArgumentList.Add(TaskName);
+            using var p = Process.Start(psi);
             p?.WaitForExit(5000);
             if (p?.ExitCode != 0)
             {
@@ -59,14 +62,16 @@ public static class ElevatedLauncher
     {
         var executable = PathResolver.ForElevation(Environment.ProcessPath!);
         Logger.Info($"Requesting UAC repair through executable: {executable}");
-        Process.Start(new ProcessStartInfo
+        var psi = new ProcessStartInfo
         {
             FileName = executable,
-            Arguments = $"--register-and-run \"{requestFile}\"",
             UseShellExecute = true,
             Verb = "runas",
             WorkingDirectory = Environment.SystemDirectory
-        });
+        };
+        psi.ArgumentList.Add("--register-and-run");
+        psi.ArgumentList.Add(requestFile);
+        Process.Start(psi);
     }
 
     // Compatibility path for tasks registered by 1.00. Do not delete the request here;
@@ -90,13 +95,15 @@ public static class ElevatedLauncher
                 }
 
                 Logger.Info($"Legacy dispatcher launching: {executable}");
-                Process.Start(new ProcessStartInfo
+                var psi = new ProcessStartInfo
                 {
                     FileName = executable,
-                    Arguments = $"--consume-request \"{requestFile}\"",
                     UseShellExecute = false,
                     WorkingDirectory = Environment.SystemDirectory
-                });
+                };
+                psi.ArgumentList.Add("--consume-request");
+                psi.ArgumentList.Add(requestFile);
+                Process.Start(psi);
             }
             catch (Exception ex)
             {
@@ -113,24 +120,30 @@ public static class ElevatedLauncher
         Directory.CreateDirectory(AppPaths.LocalDirectory);
         WriteLocalBrokerScript();
 
-        var script = AppPaths.ElevatedLauncherScript.Replace("'", "''");
+        var actionArguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{AppPaths.ElevatedLauncherScript}\"";
+        var actionArgumentsPs = actionArguments.Replace("'", "''");
         var user = WindowsIdentity.GetCurrent().Name.Replace("'", "''");
         var taskName = TaskName.Replace("'", "''");
-        var ps = "$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"';" +
+        var ps = $"$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '{actionArgumentsPs}';" +
                  $"$p=New-ScheduledTaskPrincipal -UserId '{user}' -LogonType Interactive -RunLevel Highest;" +
                  "$s=New-ScheduledTaskSettingsSet -MultipleInstances Parallel;" +
                  "$t=New-ScheduledTask -Action $a -Principal $p -Settings $s;" +
                  $"Register-ScheduledTask -TaskName '{taskName}' -InputObject $t -Force | Out-Null";
 
         Logger.Info($"Registering elevated launcher task with local broker: {AppPaths.ElevatedLauncherScript}");
-        using var p = Process.Start(new ProcessStartInfo
+        var psi = new ProcessStartInfo
         {
             FileName = "powershell.exe",
-            Arguments = $"-NoProfile -ExecutionPolicy Bypass -Command \"{ps}\"",
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = Environment.SystemDirectory
-        });
+        };
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add(ps);
+        using var p = Process.Start(psi);
         p?.WaitForExit();
         if (p?.ExitCode != 0)
             throw new InvalidOperationException($"Failed to register elevated launcher task. Exit code: {p?.ExitCode}");
