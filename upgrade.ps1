@@ -4,15 +4,18 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$UpdaterRevision = '1.05'
+$UpdaterRevision = '1.06'
 $RepoDir = [IO.Path]::GetFullPath($RepoDir).TrimEnd('\')
 $LogDir = Join-Path $RepoDir 'logs'
 $LogFile = Join-Path $LogDir 'upgrade.log'
 $StageDir = Join-Path $RepoDir '.upgrade-stage'
 $BackupDir = Join-Path $RepoDir '.upgrade-dist-backup'
 $DistDir = Join-Path $RepoDir 'dist'
-$LocalStateDir = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'WindowsTerminalFlow'
-$PathStateFile = Join-Path $LocalStateDir 'path-entry.txt'
+$ConfigDir = Join-Path $RepoDir 'config'
+$ConfigFile = Join-Path $ConfigDir 'config.json'
+$WorkspacesFile = Join-Path $ConfigDir 'workspaces.json'
+$LegacyRoamingDir = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)) 'WindowsTerminalFlow'
+$LegacyLocalDir = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'WindowsTerminalFlow'
 $Phase = 'BOOTSTRAP'
 $WarningCount = 0
 $UseColor = -not $env:NO_COLOR -and -not [Console]::IsOutputRedirected
@@ -121,30 +124,82 @@ function Normalize-PathEntry([string]$Entry) {
     $value = $Entry.Trim().Trim('"')
     try {
         $expanded = [Environment]::ExpandEnvironmentVariables($value)
-        if ([IO.Path]::IsPathRooted($expanded)) {
-            $value = [IO.Path]::GetFullPath($expanded)
-        }
+        if ([IO.Path]::IsPathRooted($expanded)) { $value = [IO.Path]::GetFullPath($expanded) }
     }
     catch { }
-
     $root = $null
     try { $root = [IO.Path]::GetPathRoot($value) } catch { }
-    if (-not [string]::IsNullOrEmpty($root) -and $value.Length -gt $root.Length) {
-        $value = $value.TrimEnd('\','/')
-    }
+    if (-not [string]::IsNullOrEmpty($root) -and $value.Length -gt $root.Length) { $value = $value.TrimEnd('\','/') }
     return $value
+}
+function Read-ProjectConfig {
+    if (-not (Test-Path -LiteralPath $script:ConfigFile)) { return [ordered]@{} }
+    try {
+        $raw = Get-Content -LiteralPath $script:ConfigFile -Raw -Encoding UTF8
+        if ([string]::IsNullOrWhiteSpace($raw)) { return [ordered]@{} }
+        $obj = $raw | ConvertFrom-Json
+        $map = [ordered]@{}
+        foreach ($p in $obj.PSObject.Properties) { $map[$p.Name] = $p.Value }
+        return $map
+    }
+    catch {
+        throw "Unable to read project config '$script:ConfigFile': $($_.Exception.Message)"
+    }
+}
+function Write-ProjectConfig($Config) {
+    New-Item -ItemType Directory -Force -Path $script:ConfigDir | Out-Null
+    $json = [pscustomobject]$Config | ConvertTo-Json -Depth 10
+    [IO.File]::WriteAllText($script:ConfigFile, $json + [Environment]::NewLine, $script:Utf8)
+}
+function Migrate-LegacyState {
+    New-Item -ItemType Directory -Force -Path $script:ConfigDir | Out-Null
+
+    $legacyConfig = Join-Path $script:LegacyRoamingDir 'config.json'
+    $legacyWorkspaces = Join-Path $script:LegacyRoamingDir 'workspaces.json'
+    $legacyPathState = Join-Path $script:LegacyLocalDir 'path-entry.txt'
+    $legacyLog = Join-Path $script:LegacyLocalDir 'logs\wtf.log'
+
+    if (-not (Test-Path -LiteralPath $script:ConfigFile) -and (Test-Path -LiteralPath $legacyConfig)) {
+        Copy-FileWithRetry -Source $legacyConfig -Destination $script:ConfigFile
+        Write-Step '[MIGRATE] Moved application settings from legacy APPDATA storage into project config.'
+    }
+    if (-not (Test-Path -LiteralPath $script:WorkspacesFile) -and (Test-Path -LiteralPath $legacyWorkspaces)) {
+        Copy-FileWithRetry -Source $legacyWorkspaces -Destination $script:WorkspacesFile
+        Write-Step '[MIGRATE] Moved workspace definitions from legacy APPDATA storage into project config.'
+    }
+
+    $config = Read-ProjectConfig
+    if ((-not $config.Contains('ManagedPathEntry') -or [string]::IsNullOrWhiteSpace([string]$config['ManagedPathEntry'])) -and (Test-Path -LiteralPath $legacyPathState)) {
+        try {
+            $legacyManagedPath = (Get-Content -LiteralPath $legacyPathState -Raw -Encoding UTF8).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($legacyManagedPath)) {
+                $config['ManagedPathEntry'] = $legacyManagedPath
+                Write-ProjectConfig $config
+                Write-Step '[MIGRATE] Moved managed PATH metadata into project config.'
+            }
+        }
+        catch { Write-Warn "Could not migrate legacy PATH metadata: $($_.Exception.Message)" }
+    }
+
+    if ((Test-Path -LiteralPath $legacyLog) -and -not (Test-Path -LiteralPath (Join-Path $script:LogDir 'wtf.log'))) {
+        Copy-FileWithRetry -Source $legacyLog -Destination (Join-Path $script:LogDir 'wtf.log')
+    }
+
+    foreach ($legacyDir in @($script:LegacyRoamingDir, $script:LegacyLocalDir)) {
+        if (Test-Path -LiteralPath $legacyDir) {
+            try {
+                Remove-Item -LiteralPath $legacyDir -Recurse -Force -ErrorAction Stop
+                Write-Step "[MIGRATE] Removed legacy C: storage: $legacyDir"
+            }
+            catch { Write-Warn "Unable to remove legacy WTF storage '$legacyDir': $($_.Exception.Message)" }
+        }
+    }
 }
 function Ensure-UserPathEntry([string]$TargetPath) {
     $target = [IO.Path]::GetFullPath($TargetPath).TrimEnd('\')
     $targetNormalized = Normalize-PathEntry $target
-    $previousTracked = $null
-
-    if (Test-Path -LiteralPath $script:PathStateFile) {
-        try {
-            $previousTracked = (Get-Content -LiteralPath $script:PathStateFile -Raw -ErrorAction Stop).Trim()
-        }
-        catch { $previousTracked = $null }
-    }
+    $config = Read-ProjectConfig
+    $previousTracked = if ($config.Contains('ManagedPathEntry')) { [string]$config['ManagedPathEntry'] } else { '' }
     $previousNormalized = if ([string]::IsNullOrWhiteSpace($previousTracked)) { '' } else { Normalize-PathEntry $previousTracked }
 
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -158,47 +213,29 @@ function Ensure-UserPathEntry([string]$TargetPath) {
     foreach ($entry in $entries) {
         if ([string]::IsNullOrWhiteSpace($entry)) { continue }
         $normalized = Normalize-PathEntry $entry
-
         if ($normalized.Equals($targetNormalized, [StringComparison]::OrdinalIgnoreCase)) {
-            if (-not $foundTarget) {
-                $newEntries.Add($entry.Trim())
-                $foundTarget = $true
-            }
-            else {
-                $removedDuplicate = $true
-            }
+            if (-not $foundTarget) { $newEntries.Add($entry.Trim()); $foundTarget = $true }
+            else { $removedDuplicate = $true }
             continue
         }
-
-        if ($previousNormalized -and
-            -not $previousNormalized.Equals($targetNormalized, [StringComparison]::OrdinalIgnoreCase) -and
-            $normalized.Equals($previousNormalized, [StringComparison]::OrdinalIgnoreCase)) {
+        if ($previousNormalized -and -not $previousNormalized.Equals($targetNormalized, [StringComparison]::OrdinalIgnoreCase) -and $normalized.Equals($previousNormalized, [StringComparison]::OrdinalIgnoreCase)) {
             $removedPrevious = $true
             continue
         }
-
         $newEntries.Add($entry.Trim())
     }
 
-    if (-not $foundTarget) {
-        $newEntries.Add($target)
-    }
-
+    if (-not $foundTarget) { $newEntries.Add($target) }
     $newUserPath = [string]::Join(';', $newEntries)
-    if ($newUserPath -ne $userPath) {
-        [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
-    }
+    if ($newUserPath -ne $userPath) { [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User') }
 
-    New-Item -ItemType Directory -Force -Path $script:LocalStateDir | Out-Null
-    Set-Content -LiteralPath $script:PathStateFile -Value $target -Encoding UTF8
+    $config['ManagedPathEntry'] = $target
+    Write-ProjectConfig $config
 
     $verifyPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $verifyFound = $false
     foreach ($entry in @($verifyPath -split ';')) {
-        if ((Normalize-PathEntry $entry).Equals($targetNormalized, [StringComparison]::OrdinalIgnoreCase)) {
-            $verifyFound = $true
-            break
-        }
+        if ((Normalize-PathEntry $entry).Equals($targetNormalized, [StringComparison]::OrdinalIgnoreCase)) { $verifyFound = $true; break }
     }
     if (-not $verifyFound) { throw "Failed to register '$target' in USER PATH." }
 
@@ -208,7 +245,6 @@ function Ensure-UserPathEntry([string]$TargetPath) {
     if (-not $foundTarget) { Write-Ok "[PATH] Added WindowsTerminalFlow to USER PATH: $target" }
     elseif ($removedDuplicate) { Write-Ok "[PATH] Removed duplicate WindowsTerminalFlow USER PATH entries: $target" }
     else { Write-Step "[PATH] WindowsTerminalFlow already present in USER PATH: $target" }
-
     if ($removedPrevious) { Write-Step "[PATH] Removed previous tracked WindowsTerminalFlow path: $previousTracked" }
 }
 
@@ -219,10 +255,7 @@ try {
     $Phase = 'REPOSITORY'
     Write-Step '[REPOSITORY] Verifying repository identity and working tree...'
     $origin = (Invoke-Native -File 'git.exe' -ArgumentList @('remote','get-url','origin') -Quiet | Select-Object -First 1).ToString().Trim()
-    if ($origin -notmatch '(?i)github\.com[:/]Suenee/WindowsTerminalFlow(?:\.git)?$') {
-        Fail "Unexpected origin URL: $origin"
-    }
-
+    if ($origin -notmatch '(?i)github\.com[:/]Suenee/WindowsTerminalFlow(?:\.git)?$') { Fail "Unexpected origin URL: $origin" }
     Invoke-Native -File 'git.exe' -ArgumentList @('fetch','origin',$Branch) | Out-Null
 
     $worktreeRc = Invoke-GitQuietStatus @('diff','--quiet','--ignore-space-at-eol','--ignore-submodules','--','.',':(exclude)upgrade.cmd',':(exclude)upgrade.ps1')
@@ -238,11 +271,14 @@ try {
     Write-Step '[REPOSITORY] Synchronizing authoritative updater and tracked tree to origin/DEVEL...'
     Invoke-Native -File 'git.exe' -ArgumentList @('checkout',$Branch) | Out-Null
     Invoke-Native -File 'git.exe' -ArgumentList @('reset','--hard',"origin/$Branch") | Out-Null
-
     $head = (Invoke-Native -File 'git.exe' -ArgumentList @('rev-parse','HEAD') -Quiet | Select-Object -First 1).ToString().Trim()
     $remoteHead = (Invoke-Native -File 'git.exe' -ArgumentList @('rev-parse',"origin/$Branch") -Quiet | Select-Object -First 1).ToString().Trim()
     if ($head -ne $remoteHead) { Fail "HEAD does not match origin/$Branch after synchronization." }
     Add-Content $LogFile "Synchronized commit: $head"
+
+    $Phase = 'MIGRATE'
+    Write-Step '[MIGRATE] Ensuring all persistent WTF data lives inside the project directory...'
+    Migrate-LegacyState
 
     $Phase = 'DEPENDENCIES'
     Write-Step '[DEPENDENCIES] Checking .NET 10 SDK...'
@@ -275,7 +311,7 @@ try {
     Invoke-Native -File 'dotnet.exe' -ArgumentList @('restore','WindowsTerminalFlow.sln') | Out-Null
 
     $Phase = 'BUILD'
-    Write-Step '[BUILD] Building WindowsTerminalFlow 1.01...'
+    Write-Step '[BUILD] Building WindowsTerminalFlow 1.02...'
     Invoke-Native -File 'dotnet.exe' -ArgumentList @('build','WindowsTerminalFlow.sln','-c','Release','--no-restore') | Out-Null
 
     $Phase = 'DIST'
@@ -295,7 +331,6 @@ try {
         Write-Step '[DEPLOY] Backing up current dist before replacement...'
         Copy-TreeWithRetry -Source $DistDir -Destination $BackupDir
     }
-
     try {
         Remove-Generated $DistDir
         New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
@@ -310,9 +345,7 @@ try {
                 Copy-TreeWithRetry -Source $BackupDir -Destination $DistDir
                 Write-Warn 'Deployment failed; previous dist was restored from backup.'
             }
-            catch {
-                throw "Deployment failed and rollback also failed. Deployment error: $deployError; rollback error: $($_.Exception.Message)"
-            }
+            catch { throw "Deployment failed and rollback also failed. Deployment error: $deployError; rollback error: $($_.Exception.Message)" }
         }
         throw "Deployment failed: $deployError"
     }
@@ -320,9 +353,7 @@ try {
     $Phase = 'VERIFY'
     $exe = Join-Path $DistDir 'wtf.exe'
     $dll = Join-Path $DistDir 'wtf.dll'
-    if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $dll)) {
-        Fail 'Deployment verification failed: required dist artifacts are missing.'
-    }
+    if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $dll)) { Fail 'Deployment verification failed: required dist artifacts are missing.' }
 
     $Phase = 'PATH'
     Write-Step '[PATH] Ensuring the current dist directory is registered in USER PATH...'
@@ -332,7 +363,7 @@ try {
     Remove-Generated $BackupDir
 
     $Phase = 'COMPLETE'
-    Write-Ok "WindowsTerminalFlow 1.01 ready: $exe"
+    Write-Ok "WindowsTerminalFlow 1.02 ready: $exe"
     Write-Step '[PATH] New terminal processes can invoke WTF as: wtf'
     if ($WarningCount -gt 0) { Add-Content $LogFile 'STATUS: WARNING - phase=COMPLETE' }
     else { Add-Content $LogFile 'STATUS: SUCCESS - phase=COMPLETE' }
