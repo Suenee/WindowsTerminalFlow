@@ -60,7 +60,8 @@ public static class ElevatedLauncher
     public static void RegisterWithUacAndRun(string requestFile)
     {
         var executable = PathResolver.ForElevation(Environment.ProcessPath!);
-        Logger.Info($"Requesting UAC repair through executable: {executable}");
+        var elevatedRequestFile = PathResolver.ForElevation(requestFile);
+        Logger.Info($"Requesting UAC repair through executable: {executable}; request={elevatedRequestFile}");
         var psi = new ProcessStartInfo
         {
             FileName = executable,
@@ -69,7 +70,7 @@ public static class ElevatedLauncher
             WorkingDirectory = Environment.SystemDirectory
         };
         psi.ArgumentList.Add("--register-and-run");
-        psi.ArgumentList.Add(requestFile);
+        psi.ArgumentList.Add(elevatedRequestFile);
         Process.Start(psi);
     }
 
