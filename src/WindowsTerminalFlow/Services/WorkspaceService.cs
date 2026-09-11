@@ -15,6 +15,7 @@ public static class WorkspaceService
         {
             ws = new WorkspaceDefinition();
             store.Workspaces[root] = ws;
+            Logger.Info($"New workspace discovered: {root}");
         }
 
         var current = Directory.GetDirectories(root)
@@ -25,17 +26,24 @@ public static class WorkspaceService
             .ToList();
 
         if (ws.Folders.Count == 0)
+        {
             ws.Folders = current.Select(x => new WorkspaceFolder { Name = x, Enabled = true }).ToList();
+            Logger.Info($"Workspace initialized: {root}; folders={current.Count}");
+        }
         else
         {
             var known = new HashSet<string>(ws.Folders.Select(x => x.Name), StringComparer.OrdinalIgnoreCase);
             foreach (var folder in current.Where(x => !known.Contains(x)))
+            {
                 ws.Folders.Add(new WorkspaceFolder { Name = folder, Enabled = SettingsService.Settings.NewFoldersEnabled });
+                Logger.Info($"New workspace folder discovered: {folder}; enabled={SettingsService.Settings.NewFoldersEnabled}");
+            }
         }
 
         if (forceLoadAll)
         {
             foreach (var f in ws.Folders.Where(f => current.Contains(f.Name, StringComparer.OrdinalIgnoreCase))) f.Enabled = true;
+            Logger.Info($"Workspace load requested: all current folders enabled for {root}");
         }
 
         SaveStore(store);
@@ -47,6 +55,7 @@ public static class WorkspaceService
         var store = ReadStore();
         store.Workspaces[Normalize(root)] = definition;
         SaveStore(store);
+        Logger.Info($"Workspace state saved: {root}; folders={definition.Folders.Count}");
     }
 
     public static void SetEnabled(string root, string name, bool enabled)
@@ -55,6 +64,7 @@ public static class WorkspaceService
         var item = ws.Folders.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         if (item != null) item.Enabled = enabled;
         Save(root, ws);
+        Logger.Info($"Workspace folder enabled state changed: {name}={enabled}");
     }
 
     private static WorkspaceStore ReadStore()
