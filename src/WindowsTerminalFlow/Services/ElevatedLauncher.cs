@@ -35,9 +35,6 @@ public static class ElevatedLauncher
                 return false;
             }
 
-            // schtasks /Run only confirms that Task Scheduler accepted the request.
-            // A stale task may still point to an inaccessible mapped drive. Confirm that
-            // the elevated side really consumed this launch request.
             for (var i = 0; i < 30; i++)
             {
                 if (!File.Exists(requestFile))
@@ -149,7 +146,16 @@ public static class ElevatedLauncher
 $ErrorActionPreference = 'Continue'
 $requests = '{{requestsDirectory}}'
 $log = '{{logFile}}'
+$logging = 'off'
+try {
+    $config = Join-Path $env:APPDATA 'WindowsTerminalFlow\config.json'
+    if (Test-Path -LiteralPath $config) {
+        $cfg = Get-Content -LiteralPath $config -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($cfg.LoggingMode) { $logging = ([string]$cfg.LoggingMode).ToLowerInvariant() }
+    }
+} catch {}
 function Write-WtfLog([string]$message) {
+    if ($logging -eq 'off') { return }
     try {
         $dir = Split-Path -Parent $log
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
